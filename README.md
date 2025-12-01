@@ -1,9 +1,26 @@
-# helloworld
+# 香蕉忍法帖
 
-AstrBot 插件模板
+## TODO LIST
 
-A template plugin for AstrBot plugin feature
+* 完成重构后的冗余清理
+* 为参数a引入变量支持
+* 报错时提醒更换供应商
+* 参数控制输出思维链
+* 查看预设详情时自动提示所用到的变量用法
+* 撤回功能（生成后撤回等待词，定时撤回图片）
+* 完成内置优化预设
+* 完成内置变量生图预设
+* 写一份正式的readme
 
-# 支持
+## 预计参考 piexian/astrbot_plugin_gemini_image_generation 引入先进处理
 
-[帮助文档](https://astrbot.app)
+* 添加gemini的openai方式作为fallback
+* OpenAI 兼容接口下的传参
+* 为头像获取引入AstrBot的方法
+* 视觉裁切
+...
+
+## 有些遥远的瞎想
+
+* 引入api支持，作为变量或输入图
+* 新的占位符使用预设的图片模板
