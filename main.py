@@ -45,7 +45,7 @@ class Ninjutsu(Star):
         await self.pm.load_prompts()
         await self._load_connection_presets()
 
-        logger.info("香蕉忍法帖 插件已加载")
+        logger.info("[香蕉忍法帖] 插件已加载")
 
         if not self.conf.get("api_keys"):
             logger.warning("[香蕉忍法帖]!!! API 密钥未配置!!!")
@@ -315,4 +315,5 @@ class Ninjutsu(Star):
 
     async def terminate(self):
         await ImageUtils.terminate()
+
         logger.info("[香蕉忍法帖] 插件已终止")
