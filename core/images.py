@@ -1,0 +1,115 @@
+import aiohttp
+import asyncio
+import base64
+import io
+from pathlib import Path
+from typing import List, Optional, Union
+from PIL import Image as PILImage
+from astrbot import logger
+from astrbot.core.message.components import At, Image, Reply
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+
+class ImageUtils:
+    @staticmethod
+    async def download_image(url: str, proxy: Optional[str] = None, timeout: int = 60) -> bytes | None:
+        logger.debug(f"正在尝试下载图片: {url}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, proxy=proxy, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
+                        return None
+                    return await resp.read()
+        except Exception as e:
+            logger.error(f"图片下载异常: {e}")
+            return None
+
+    @classmethod
+    async def get_avatar(cls, user_id: str, proxy: Optional[str] = None) -> bytes | None:
+        """获取QQ头像"""
+        if not user_id.isdigit(): return None
+        avatar_url = f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
+        return await cls.download_image(avatar_url, proxy=proxy)
+
+    @staticmethod
+    def _process_image_sync(raw: bytes, ensure_white_bg: bool = False) -> bytes:
+        img_io = io.BytesIO(raw)
+        try:
+            with PILImage.open(img_io) as img:
+                if getattr(img, "is_animated", False):
+                    img.seek(0)
+
+                img = img.convert("RGBA")
+
+                if ensure_white_bg:
+                    bg = PILImage.new('RGB', img.size, (255, 255, 255))
+                    bg.paste(img, (0, 0), img)
+                    img = bg
+
+                out_io = io.BytesIO()
+                fmt = "JPEG" if img.mode == "RGB" else "PNG"
+                img.save(out_io, format=fmt)
+                return out_io.getvalue()
+        except Exception as e:
+            logger.warning(f"图片处理出错 (使用原图): {e}")
+            return raw
+
+    @classmethod
+    async def load_and_process(cls, src: Union[str, bytes], proxy: Optional[str] = None, ensure_white_bg: bool = False) -> bytes | None:
+        raw: bytes | None = None
+        loop = asyncio.get_running_loop()
+
+        if isinstance(src, bytes):
+            raw = src
+        elif isinstance(src, str):
+            if src.startswith("http"):
+                raw = await cls.download_image(src, proxy=proxy)
+            elif src.startswith("base64://"):
+                try:
+                    raw = await loop.run_in_executor(None, base64.b64decode, src[9:])
+                except Exception: pass
+            elif Path(src).is_file():
+                raw = await loop.run_in_executor(None, Path(src).read_bytes)
+
+        if not raw: return None
+
+        return await loop.run_in_executor(None, cls._process_image_sync, raw, ensure_white_bg)
+
+    @classmethod
+    async def get_images_from_event(cls, event: AstrMessageEvent, max_count: int = 5, proxy: Optional[str] = None) -> List[bytes]:
+        img_bytes_list: List[bytes] = []
+        at_user_ids: List[str] = []
+
+        for seg in event.message_obj.message:
+            if isinstance(seg, Reply) and seg.chain:
+                for s_chain in seg.chain:
+                    if isinstance(s_chain, Image):
+                        url_or_file = s_chain.url or s_chain.file
+                        if url_or_file and (img := await cls.load_and_process(url_or_file, proxy=proxy)):
+                            img_bytes_list.append(img)
+
+        for seg in event.message_obj.message:
+            if isinstance(seg, Image):
+                url_or_file = seg.url or seg.file
+                if url_or_file and (img := await cls.load_and_process(url_or_file, proxy=proxy)):
+                    img_bytes_list.append(img)
+            elif isinstance(seg, At):
+                at_user_ids.append(str(seg.qq))
+
+        if not img_bytes_list and at_user_ids:
+            for user_id in at_user_ids:
+                if avatar := await cls.get_avatar(user_id, proxy=proxy):
+                    processed = await cls.load_and_process(avatar, proxy=proxy) 
+                    if processed: img_bytes_list.append(processed)
+        
+        if not img_bytes_list:
+            sender_id = event.get_sender_id()
+            if avatar := await cls.get_avatar(sender_id, proxy=proxy):
+                processed = await cls.load_and_process(avatar, proxy=proxy)
+                if processed: img_bytes_list.append(processed)
+
+        return img_bytes_list[:max_count]
+
+    @staticmethod
+    async def terminate():
+        pass

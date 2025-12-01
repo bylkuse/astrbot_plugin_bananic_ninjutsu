@@ -1,6 +1,6 @@
-name: helloworld # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
-display_name: helloworld # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
-desc: AstrBot 插件示例。 # 插件简短描述
-version: v1.3.0 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Soulter # 作者
-repo: https://github.com/Soulter/helloworld # 插件的仓库地址
+name: astrbot_plugin_bananic_ninjutsu
+display_name: 香蕉忍法帖
+desc: 适配napcat的Astrbot插件，主攻用于🍌（nano banana）生图的各种奇妙的小巧思。
+version: v0.0.1
+author: LilDawn
+repo: https://github.com/bylkuse/astrbot_plugin_bananic_ninjutsu
