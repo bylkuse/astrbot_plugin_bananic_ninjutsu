@@ -145,6 +145,8 @@ class APIClient:
         if status_code:
             base_msg += f" (HTTP/Code {status_code})"
 
+        unified_hint = "\n👉 如持续失败，请尝试 #lmc 切换连接"
+
         for codes, keywords, reason_msg, should_retry in self._ERROR_PATTERNS:
             code_match = status_code in codes if status_code else False
             keyword_match = any(k in error_str for k in keywords)
@@ -152,10 +154,9 @@ class APIClient:
             if code_match or keyword_match:
                 if "不存在" in reason_msg and model_name:
                     reason_msg += f" ({model_name})"
-                
-                return base_msg + reason_msg, should_retry
+                return base_msg + reason_msg + unified_hint, should_retry
 
-        return base_msg + f"\n💡 详情: {str(e)[:150]}", False
+        return base_msg + f"\n💡 详情: {str(e)[:150]}" + unified_hint, False
 
     async def _call_google(self, api_key: str, config: ApiRequestConfig) -> bytes | str:
         http_options = HttpOptions(
