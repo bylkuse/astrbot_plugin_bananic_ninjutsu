@@ -55,13 +55,16 @@ class ResponsePresenter:
     @staticmethod
     def format_connection_detail(name: str, data: Dict[str, Any]) -> str:
         keys = data.get('api_keys', [])
-        key_list_str = "\n".join([f"- {k}" for k in keys]) if keys else "- (无)"
+        count = len(keys)
+
+        key_info = f"{count} 个" + (" (请使用 #lmk 查看或管理)" if count > 0 else "")
+
         return (
             f"📝 连接预设 [{name}] 详情:\n"
             f"API 类型: {data.get('api_type')}\n"
             f"API URL: {data.get('api_url')}\n"
             f"模型: {data.get('model')}\n"
-            f"Keys ({len(keys)}):\n{key_list_str}"
+            f"Keys: {key_info}"
         )
 
     @staticmethod
@@ -74,6 +77,23 @@ class ResponsePresenter:
             f"模型: {data.get('model')}\n"
             f"Key 数量: {key_count}"
         )
+
+    @staticmethod
+    def format_key_list(name: str, keys: List[str]) -> str:
+        if not keys:
+            return f"🔑 预设 [{name}] 暂无配置任何 Key。"
+
+        lines = [f"🔑 预设 [{name}] 密钥列表 (共{len(keys)}个):"]
+        for i, k in enumerate(keys):
+            if len(k) > 12:
+                masked_key = f"{k[:8]}......{k[-4:]}"
+            else:
+                masked_key = k 
+
+            lines.append(f"{i+1}. {masked_key}")
+        
+        lines.append("\n💡 指令提示: #lmk del <预设名> <序号> 删除指定Key")
+        return "\n".join(lines)
 
     @staticmethod
     def key_management(current_preset: str) -> str:

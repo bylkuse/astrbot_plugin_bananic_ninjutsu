@@ -44,32 +44,31 @@ class Ninjutsu(Star):
         await self.stats.load_all_data()
         await self.pm.load_prompts()
         await self._load_connection_presets()
-
-        logger.info("[香蕉忍法帖] 插件已加载")
-
+        logger.info("香蕉忍法帖 插件已加载")
         if not self.conf.get("api_keys"):
             logger.warning("[香蕉忍法帖]!!! API 密钥未配置!!!")
 
     def is_global_admin(self, event: AstrMessageEvent) -> bool:
-        admin_ids = self.context.get_config().get("admins_id", [])
-        return event.get_sender_id() in admin_ids
+        return event.get_sender_id() in self.context.get_config().get("admins_id", [])
 
     async def _load_connection_presets(self):
         raw_list = self.conf.get("connection_presets", [])
         self.connection_presets = ConfigSerializer.load_json_list(raw_list, key_field="name")
         self.current_preset_name = self.conf.get("current_preset_name", "GoogleDefault")
         self.generation_service.set_current_preset_name(self.current_preset_name)
-    
-        current_preset = self.connection_presets.get(self.current_preset_name)
-        if current_preset: 
-            self._apply_preset_to_config(current_preset)
+
+        if self.current_preset_name in self.connection_presets:
+            self._apply_preset_to_config(self.connection_presets[self.current_preset_name])
 
     def _apply_preset_to_config(self, preset_data: Dict[str, Any]):
-        self.conf["api_type"] = preset_data.get("api_type", "google")
-        self.conf["api_url"] = preset_data.get("api_url", self.conf.get("api_url"))
-        self.conf["model"] = preset_data.get("model", self.conf.get("model"))
-        self.conf["api_keys"] = preset_data.get("api_keys", self.conf.get("api_keys"))
-        logger.info(f"已应用连接预设: {preset_data['name']}")
+        for key in ["api_type", "api_url", "model", "api_keys"]:
+            if key in preset_data:
+                self.conf[key] = preset_data[key]
+        logger.info(f"已应用连接预设: {preset_data.get('name')}")
+
+    async def _save_connections(self):
+        self.conf["connection_presets"] = ConfigSerializer.dump_json_list(self.connection_presets)
+        await self.config_mgr.save_config()
 
     # --- Event Handlers ---
 
@@ -94,7 +93,6 @@ class Ninjutsu(Star):
         if cmd_pure == bnn_command or cmd_pure == "图生图":
             target_text = parsed.text
             cmd_display = f"#{cmd_pure}"
-
         elif self.pm.get_preset(cmd_pure):
             target_text = cmd_pure
             cmd_display = f"#{cmd_pure}"
@@ -110,7 +108,7 @@ class Ninjutsu(Star):
     @filter.command("文生图", alias={"lmt"}, prefix_optional=True)
     async def on_text_to_image_request(self, event: AstrMessageEvent):
         raw_text = event.message_str.strip()
-        cmd_part = raw_text.split()[0] 
+        cmd_part = raw_text.split()[0]
         parsed = CommandParser.parse(event, cmd_part)
         params = parsed.params
         if parsed.first_at: params['first_at'] = parsed.first_at
@@ -154,6 +152,7 @@ class Ninjutsu(Star):
         def parse_connection_add(parts: List[str], text: str):
             if not is_admin: return None
             if len(parts) >= 5 and parts[0].lower() == "add":
+                # add name type url model [key1,key2]
                 name, api_type, api_url, model = parts[1], parts[2], parts[3], parts[4]
                 keys = parts[5].split(',') if len(parts) > 5 else []
                 return name, {"name": name, "api_type": api_type, "api_url": api_url, "model": model, "api_keys": keys}
@@ -163,10 +162,11 @@ class Ninjutsu(Star):
             if self.current_preset_name == deleted_key:
                 new_name = next(iter(self.connection_presets.keys()), "GoogleDefault")
                 self.current_preset_name = new_name
-                self.conf["current_preset_name"] = new_name # Update config directly for save
+                self.conf["current_preset_name"] = new_name
                 self.generation_service.set_current_preset_name(new_name)
                 if new_name in self.connection_presets:
                     self._apply_preset_to_config(self.connection_presets[new_name])
+            await self._save_connections()
 
         async def handle_extras(evt, parts):
             sub = parts[0].lower() if parts else ""
@@ -195,24 +195,22 @@ class Ninjutsu(Star):
                 self.conf["debug_prompt"] = new_state
                 await self.config_mgr.save_config()
                 return evt.plain_result(f"{'✅' if new_state else '❌'} 调试模式已{'开启' if new_state else '关闭'}。")
-                
+
             if len(parts) == 1 and parts[0] not in ["add", "del", "ren"]:
                 if parts[0] in self.connection_presets:
                     return evt.plain_result(ResponsePresenter.format_connection_detail(parts[0], self.connection_presets[parts[0]]))
             return None
-
-        self.conf["connection_presets"] = ConfigSerializer.dump_json_list(self.connection_presets)
 
         async for res in self.config_mgr.handle_crud_command(
             event, ["lm连接", "lmc"], self.connection_presets, "连接预设", 
             is_admin, parse_connection_add, after_delete, handle_extras
         ): yield res
 
-        self.conf["connection_presets"] = ConfigSerializer.dump_json_list(self.connection_presets)
+        await self._save_connections()
 
     @filter.command("lm帮助", alias={"lmh"}, prefix_optional=True)
     async def on_prompt_help(self, event: AstrMessageEvent):
-        cmd_text = self.config_mgr._strip_command(event.message_str.strip(), ["lm帮助", "lmh"])
+        cmd_text = ConfigManager.strip_command(event.message_str.strip(), ["lm帮助", "lmh"])
         sub = cmd_text.strip().lower()
         if sub in ["参数", "param", "params", "p", "--help"]: yield event.plain_result(ResponsePresenter.help_params()); return
         if sub in ["变量", "var", "vars", "v"]: yield event.plain_result(ResponsePresenter.help_vars()); return
@@ -220,7 +218,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm次数", alias={"lm"}, prefix_optional=True)
     async def on_counts_management(self, event: AstrMessageEvent):
-        cmd_text = self.config_mgr._strip_command(event.message_str.strip(), ["lm次数", "lm"])
+        cmd_text = ConfigManager.strip_command(event.message_str.strip(), ["lm次数", "lm"])
         parts = cmd_text.split()
         is_admin = self.is_global_admin(event)
         user_id = event.get_sender_id()
@@ -233,7 +231,9 @@ class Ninjutsu(Star):
                     msg_parts.append("📅 您今天已经签到过了。")
                 else:
                     import random
-                    reward = random.randint(1, max(1, int(self.conf.get("checkin_random_reward_max", 5)))) if str(self.conf.get("enable_random_checkin", False)).lower() == 'true' else int(self.conf.get("checkin_fixed_reward", 3))
+                    is_random = str(self.conf.get("enable_random_checkin", False)).lower() == 'true'
+                    base = int(self.conf.get("checkin_random_reward_max", 5))
+                    reward = random.randint(1, max(1, base)) if is_random else int(self.conf.get("checkin_fixed_reward", 3))
                     await self.stats.perform_checkin(user_id, reward)
                     msg_parts.append(f"🎉 签到成功！获得 {reward} 次。")
             elif self.conf.get("enable_checkin_display", False): msg_parts.append("📅 签到功能未开启。")
@@ -254,61 +254,116 @@ class Ninjutsu(Star):
             return
 
         sub_command = parts[0].lower()
-        if sub_command == "用户":
-            if not is_admin: return
+
+        if sub_command == "用户" and is_admin:
+            target_qq = None
+            count = 0
+
             at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
-            target_qq, count = (str(at_seg.qq), int(re.search(r"(\d+)\s*$", cmd_text).group(1))) if at_seg and re.search(r"(\d+)\s*$", cmd_text) else (parts[1], int(parts[2])) if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit() else (None, 0)
-            if not target_qq or count <= 0: yield event.plain_result('格式错误:\n#lm次数 用户 @用户 <次数>\n或 #lm次数 用户 <QQ号> <次数>'); return
+            match_num = re.search(r"(\d+)\s*$", cmd_text)
+
+            if at_seg and match_num:
+                target_qq = str(at_seg.qq)
+                count = int(match_num.group(1))
+            elif len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                target_qq = parts[1]
+                count = int(parts[2])
+
+            if not target_qq or count <= 0:
+                yield event.plain_result('格式错误:\n#lm次数 用户 @用户 <次数>\n或 #lm次数 用户 <QQ号> <次数>')
+                return
+
             new_val = await self.stats.modify_user_count(target_qq, count)
             yield event.plain_result(f"✅ 已为用户 {target_qq} 增加 {count} 次，TA当前剩余 {new_val} 次。")
             return
 
-        if sub_command == "群组":
-            if not is_admin: return
-            if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit(): yield event.plain_result('格式错误: #lm次数 群组 <群号> <次数>'); return
+        if sub_command == "群组" and is_admin:
+            if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
+                yield event.plain_result('格式错误: #lm次数 群组 <群号> <次数>')
+                return
             new_val = await self.stats.modify_group_count(parts[1], int(parts[2]))
             yield event.plain_result(f"✅ 已为群组 {parts[1]} 增加 {parts[2]} 次，该群当前剩余 {new_val} 次。")
             return
 
-        # 查询他人
-        uid_query = str(next((s.qq for s in event.message_obj.message if isinstance(s, At)), re.search(r"(\d+)", cmd_text).group(1) if re.search(r"(\d+)", cmd_text) else user_id)) if is_admin else user_id
-        reply_msg = f"用户 {uid_query} 个人剩余次数为: {self.stats.get_user_count(uid_query)}"
-        if group_id: reply_msg += f"\n本群共享剩余次数为: {self.stats.get_group_count(group_id)}"
-        yield event.plain_result(reply_msg)
+        if is_admin:
+            target = next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None)
+            if not target and re.search(r"(\d+)", cmd_text):
+                target = re.search(r"(\d+)", cmd_text).group(1)
+
+            query_uid = target if target else user_id
+            reply = f"用户 {query_uid} 个人剩余次数为: {self.stats.get_user_count(query_uid)}"
+            if group_id: reply += f"\n本群共享剩余次数为: {self.stats.get_group_count(group_id)}"
+            yield event.plain_result(reply)
 
     @filter.command("lm密钥", alias={"lmk"}, prefix_optional=True)
     async def on_key_management(self, event: AstrMessageEvent):
         if not self.is_global_admin(event): return
-        cmd_text = self.config_mgr._strip_command(event.message_str.strip(), ["lm密钥", "lmk"])
+        cmd_text = ConfigManager.strip_command(event.message_str.strip(), ["lm密钥", "lmk"])
         parts = cmd_text.split()
-        if not parts: yield event.plain_result(ResponsePresenter.key_management(self.current_preset_name)); return
 
-        sub, args = parts[0].lower(), parts[1:]
+        if not parts: 
+            yield event.plain_result(ResponsePresenter.key_management(self.current_preset_name))
+            return
+
+        sub = parts[0].lower()
+        args = parts[1:]
+
         try:
             if sub == "add":
                 if len(args) < 2: yield event.plain_result("格式错误: #lmkey add <预设名> <Key1> [Key2]..."); return
-                if args[0] not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", args[0])); return
-                preset = self.connection_presets[args[0]]
-                async for res in self.config_mgr.perform_save_with_confirm(event, preset, "api_keys", preset.get("api_keys", []) + [k for k in args[1:] if k not in preset.get("api_keys", [])], f"密钥组({args[0]})"): yield res
-                self.conf["connection_presets"] = ConfigSerializer.dump_json_list(self.connection_presets)
-                await self.config_mgr.save_config()
+                name = args[0]
+                if name not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", name)); return
+
+                preset = self.connection_presets[name]
+                current_keys = preset.get("api_keys", [])
+                new_keys_to_add = [k for k in args[1:] if k not in current_keys]
+
+                async for res in self.config_mgr.perform_save_with_confirm(
+                    event, preset, "api_keys", current_keys + new_keys_to_add, f"密钥组({name})"
+                ): yield res
+
+                await self._save_connections()
 
             elif sub == "del":
                 if len(args) < 2: yield event.plain_result("格式错误: #lmk del <预设名> <序号|all>"); return
-                if args[0] not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", args[0])); return
-                preset = self.connection_presets[args[0]]
+                name, idx_str = args[0], args[1]
+                if name not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", name)); return
+
+                preset = self.connection_presets[name]
                 keys = preset.get("api_keys", [])
-                new_keys = [] if args[1].lower() == "all" else (keys[:int(args[1])-1] + keys[int(args[1]):] if args[1].isdigit() and 1 <= int(args[1]) <= len(keys) else None)
-                if new_keys is None: yield event.plain_result("❌ 序号无效。"); return
-                async for res in self.config_mgr.perform_save_with_confirm(event, preset, "api_keys", new_keys, f"密钥组({args[0]})"): yield res
-                self.conf["connection_presets"] = ConfigSerializer.dump_json_list(self.connection_presets)
-                await self.config_mgr.save_config()
+
+                new_key_list = None
+                if idx_str.lower() == "all":
+                    new_key_list = []
+                elif idx_str.isdigit():
+                    idx = int(idx_str)
+                    if 1 <= idx <= len(keys):
+                        new_key_list = keys[:idx-1] + keys[idx:]
+
+                if new_key_list is None: yield event.plain_result("❌ 序号无效。"); return
+
+                async for res in self.config_mgr.perform_save_with_confirm(
+                    event, preset, "api_keys", new_key_list, f"密钥组({name})"
+                ): yield res
+                
+                await self._save_connections()
 
             else:
-                target = args[0] if (sub == "list" and args) else parts[0]
-                if target not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", target)); return
-                keys = self.connection_presets[target].get("api_keys", [])
-                yield event.plain_result(f"🔑 [{target}] Keys:\n" + ("\n".join(f"{i+1}. {k[:8]}...{k[-4:]}" for i, k in enumerate(keys)) if keys else "暂无"))
+                target_preset_name = ""
+
+                if sub == "list" and args:
+                    target_preset_name = args[0]
+                else:
+                    target_preset_name = parts[0]
+
+                if target_preset_name not in self.connection_presets:
+                    yield event.plain_result(ResponsePresenter.item_not_found("预设", target_preset_name))
+                    return
+
+                keys = self.connection_presets[target_preset_name].get("api_keys", [])
+
+                yield event.plain_result(ResponsePresenter.format_key_list(target_preset_name, keys))
+
         except Exception as e:
             logger.error(f"Key 操作失败: {e}", exc_info=True)
             yield event.plain_result(f"❌ 操作失败: {e}")

@@ -77,31 +77,37 @@ class ImageUtils:
 
     @classmethod
     async def get_images_from_event(cls, event: AstrMessageEvent, max_count: int = 5, proxy: Optional[str] = None) -> List[bytes]:
+        """提取图片"""
         img_bytes_list: List[bytes] = []
         at_user_ids: List[str] = []
 
         for seg in event.message_obj.message:
+            # 回复链
             if isinstance(seg, Reply) and seg.chain:
                 for s_chain in seg.chain:
                     if isinstance(s_chain, Image):
                         url_or_file = s_chain.url or s_chain.file
                         if url_or_file and (img := await cls.load_and_process(url_or_file, proxy=proxy)):
                             img_bytes_list.append(img)
-
-        for seg in event.message_obj.message:
-            if isinstance(seg, Image):
+            
+            # 发送图
+            elif isinstance(seg, Image):
                 url_or_file = seg.url or seg.file
                 if url_or_file and (img := await cls.load_and_process(url_or_file, proxy=proxy)):
                     img_bytes_list.append(img)
+            
+            # 收集 @
             elif isinstance(seg, At):
                 at_user_ids.append(str(seg.qq))
 
+        #  @ 头像
         if not img_bytes_list and at_user_ids:
             for user_id in at_user_ids:
                 if avatar := await cls.get_avatar(user_id, proxy=proxy):
                     processed = await cls.load_and_process(avatar, proxy=proxy) 
                     if processed: img_bytes_list.append(processed)
         
+        # 发送者头像
         if not img_bytes_list:
             sender_id = event.get_sender_id()
             if avatar := await cls.get_avatar(sender_id, proxy=proxy):

@@ -21,7 +21,9 @@ class ConfigManager:
         except Exception as e:
             raise RuntimeError(f"保存配置失败: {e}")
 
-    def _strip_command(self, text: str, commands: List[str]) -> str:
+    @staticmethod
+    def strip_command(text: str, commands: List[str]) -> str:
+        """去前缀"""
         commands = sorted(commands, key=len, reverse=True)
         cmd_pattern = "|".join(re.escape(c) for c in commands)
         pattern = fr'^[#\/]?({cmd_pattern})\s*'
@@ -40,12 +42,12 @@ class ConfigManager:
 
         if key in target_dict:
             old_value = target_dict[key]
-            old_str = json.dumps(old_value, sort_keys=True) if isinstance(old_value, (dict, list)) else str(old_value)
-            new_str = json.dumps(new_value, sort_keys=True) if isinstance(new_value, (dict, list)) else str(new_value)
-
-            if old_str == new_str:
+            if old_value == new_value:
                 yield event.plain_result(f"💡 {item_name} [{key}] 内容未变更。")
                 return
+
+            old_str = json.dumps(old_value, sort_keys=True, ensure_ascii=False) if isinstance(old_value, (dict, list)) else str(old_value)
+            new_str = json.dumps(new_value, sort_keys=True, ensure_ascii=False) if isinstance(new_value, (dict, list)) else str(new_value)
 
             preview_old = old_str[:100] + "..." if len(old_str) > 100 else old_str
             preview_new = new_str[:100] + "..." if len(new_str) > 100 else new_str
@@ -67,7 +69,7 @@ class ConfigManager:
                     controller.stop()
             try:
                 await confirmation_waiter(event)
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 yield event.plain_result("⏰ 操作超时，已自动取消。")
         else:
             async for r in perform_save(): yield r
@@ -82,9 +84,10 @@ class ConfigManager:
                               extra_cmd_handler: Optional[Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]] = None,
                               duplicate_check_type: Optional[str] = None):
         """增删改查"""
-        cmd_text = self._strip_command(event.message_str.strip(), cmd_list)
+        cmd_text = self.strip_command(event.message_str.strip(), cmd_list)
         parts = cmd_text.split()
-        main_cmd = f"#{cmd_list[0]}"
+
+        cmd_display_name = f"#{cmd_list[0]}"
 
         if extra_cmd_handler:
             result = await extra_cmd_handler(event, parts)
@@ -92,15 +95,16 @@ class ConfigManager:
                 yield result
                 return
 
+        # 字典操作
         is_handled = False
-        async for res in self._handle_standard_dict_ops(event, parts, target_dict, item_name, main_cmd, is_admin, after_delete_callback):
+        async for res in self._handle_standard_dict_ops(event, parts, target_dict, item_name, cmd_display_name, is_admin, after_delete_callback):
             yield res
             is_handled = True
 
         if is_handled: return
 
+        # 增改
         add_key, add_value = None, None
-
         if parse_add_func:
             parsed = parse_add_func(parts, cmd_text)
             if parsed:
@@ -120,13 +124,7 @@ class ConfigManager:
         if parts and parts[0] not in ["l", "list", "del", "ren"]:
             yield event.plain_result(ResponsePresenter.item_not_found(item_name, parts[0]))
 
-    async def _handle_standard_dict_ops(self, event: AstrMessageEvent, 
-                                  cmd_parts: List[str], 
-                                  target_dict: Dict[str, Any], 
-                                  item_name: str,
-                                  cmd_display_name: str,
-                                  is_admin: bool,
-                                  on_delete_callback=None):
+    async def _handle_standard_dict_ops(self, event, cmd_parts, target_dict, item_name, cmd_display_name, is_admin, on_delete_callback):
         sub = cmd_parts[0].lower() if cmd_parts else ""
 
         if sub in ["l", "list"] or not cmd_parts:
@@ -149,7 +147,6 @@ class ConfigManager:
                 preview = content_str[:30] + "..." if len(content_str) > 30 else content_str
                 msg_lines.append(f"▪️ [{name}]: {preview}")
             msg_lines.append("\n" + ResponsePresenter.presets_common(item_name, cmd_display_name, is_admin))
-            
             yield event.plain_result("\n".join(msg_lines))
             return
 
@@ -190,6 +187,7 @@ class ConfigManager:
             if new_k in target_dict:
                 yield event.plain_result(ResponsePresenter.duplicate_item(item_name, new_k))
                 return
+
             if item_name == "优化预设" and old_k == "default":
                 yield event.plain_result("❌ default 预设不可重命名。")
                 return
