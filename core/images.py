@@ -10,16 +10,26 @@ from astrbot.core.message.components import At, Image, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 class ImageUtils:
-    @staticmethod
-    async def download_image(url: str, proxy: Optional[str] = None, timeout: int = 60) -> bytes | None:
+    _session: Optional[aiohttp.ClientSession] = None
+
+    @classmethod
+    async def get_session(cls) -> aiohttp.ClientSession:
+        """单例 Session"""
+        if cls._session is None or cls._session.closed:
+            connector = aiohttp.TCPConnector(limit=100, ssl=False)
+            cls._session = aiohttp.ClientSession(connector=connector)
+        return cls._session
+
+    @classmethod
+    async def download_image(cls, url: str, proxy: Optional[str] = None, timeout: int = 60) -> bytes | None:
         logger.debug(f"正在尝试下载图片: {url}")
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, proxy=proxy, timeout=timeout) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
-                        return None
-                    return await resp.read()
+            session = await cls.get_session()
+            async with session.get(url, proxy=proxy, timeout=timeout) as resp:
+                if resp.status != 200:
+                    logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
+                    return None
+                return await resp.read()
         except Exception as e:
             logger.error(f"图片下载异常: {e}")
             return None
@@ -145,6 +155,9 @@ class ImageUtils:
 
         return await asyncio.to_thread(_blocking_compress)
 
-    @staticmethod
-    async def terminate():
-        pass
+    @classmethod
+    async def terminate(cls):
+        if cls._session and not cls._session.closed:
+            await cls._session.close()
+            cls._session = None
+            logger.debug("ImageUtils session closed.")
