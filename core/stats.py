@@ -1,9 +1,10 @@
 import asyncio
 import json
 import time
+import random
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,24 +13,37 @@ logger = logging.getLogger("astrbot")
 
 @dataclass
 class PermissionTransaction:
-    """权额事务句柄"""
     allowed: bool = False
     reject_reason: str = ""
-
     _deducted_user: bool = False
     _deducted_group: bool = False
     _is_failed: bool = False
     _fail_reason: str = ""
 
     def mark_failed(self, reason: str):
-        """标记业务执行失败，触发回滚"""
         self._is_failed = True
         self._fail_reason = reason
+
+@dataclass
+class CheckInResult:
+    success: bool
+    reward: int = 0
+    message: str = ""
+
+@dataclass
+class DashboardData:
+    # ⚠️ 注意：没有默认值的字段必须放在前面
+    user_count: int
+    group_count: int
+    leaderboard_date: str
+    top_users: List[Tuple[str, int]]
+    top_groups: List[Tuple[str, int]]
+    # ⚠️ 有默认值的字段必须放在最后
+    checkin_result: Optional[CheckInResult] = None
 
 class StatsManager:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
-
         self.user_counts_file = self.data_dir / "user_counts.json"
         self.group_counts_file = self.data_dir / "group_counts.json"
         self.user_checkin_file = self.data_dir / "user_checkin.json"
@@ -40,7 +54,6 @@ class StatsManager:
         self.user_checkin_data: Dict[str, str] = {}
         self.daily_stats: Dict[str, Any] = {"date": "", "users": {}, "groups": {}}
 
-        # 限流桶
         self._rate_limit_buckets: Dict[str, List[float]] = {}
         self._rate_limit_lock = asyncio.Lock()
 
@@ -49,16 +62,15 @@ class StatsManager:
         self.group_counts = await self._load_json(self.group_counts_file, {})
         self.user_checkin_data = await self._load_json(self.user_checkin_file, {})
         self.daily_stats = await self._load_json(self.daily_stats_file, {"date": "", "users": {}, "groups": {}})
-        logger.info("StatsManager: 统计与限流数据已加载")
+        logger.info(f"StatsManager: 数据加载完成。当前记录日期: {self.daily_stats.get('date', '无')}")
 
     async def _load_json(self, file_path: Path, default: Any) -> Any:
-        if not file_path.exists():
-            return default
+        if not file_path.exists(): return default
         try:
             content = await asyncio.to_thread(file_path.read_text, "utf-8")
             return json.loads(content)
         except Exception as e:
-            logger.error(f"加载数据文件失败 {file_path}: {e}")
+            logger.error(f"加载 {file_path} 失败: {e}")
             return default
 
     async def _save_json(self, file_path: Path, data: Any):
@@ -66,26 +78,25 @@ class StatsManager:
             content = json.dumps(data, ensure_ascii=False, indent=4)
             await asyncio.to_thread(file_path.write_text, content, "utf-8")
         except Exception as e:
-            logger.error(f"保存数据文件失败 {file_path}: {e}")
+            logger.error(f"保存 {file_path} 失败: {e}")
 
-    # --- Rate Limiting ---
+    # --- 限流 ---
 
     async def _check_rate_limit(self, group_id: str, config: Dict[str, Any]) -> bool:
-        """群组限流"""
         limit_settings = config.get("limit_settings", {})
         if not limit_settings.get("enable_rate_limit", True) or not group_id:
             return True
 
         period = int(limit_settings.get("rate_limit_period", 60))
         max_req = int(limit_settings.get("max_requests_per_group", 3))
-        
+
         now = time.time()
         window_start = now - period
 
         async with self._rate_limit_lock:
             timestamps = self._rate_limit_buckets.get(group_id, [])
             valid_timestamps = [ts for ts in timestamps if ts > window_start]
-            
+
             if len(valid_timestamps) >= max_req:
                 self._rate_limit_buckets[group_id] = valid_timestamps
                 return False
@@ -95,38 +106,33 @@ class StatsManager:
             return True
 
     def _remove_rate_limit_record(self, group_id: str):
-        """回滚限流记录"""
         bucket = self._rate_limit_buckets.get(group_id, [])
         if bucket:
             bucket.pop()
 
-    # --- Transaction Context Manager ---
+    # --- 事务上下文 ---
 
     @asynccontextmanager
     async def transaction(self, user_id: str, group_id: Optional[str], config: Dict[str, Any], is_admin: bool = False):
-        """事务上下文"""
         txn = PermissionTransaction()
 
-        # 管理员免检
         if is_admin:
             txn.allowed = True
             yield txn
             return
 
-        # 黑白名单
         if user_id in config.get("user_blacklist", []):
             txn.allowed = False; txn.reject_reason = "❌ 您已被加入黑名单。"; yield txn; return
-            
+
         if group_id and group_id in config.get("group_blacklist", []):
             txn.allowed = False; txn.reject_reason = "❌ 本群已被加入黑名单。"; yield txn; return
-            
+
         if config.get("user_whitelist") and user_id not in config.get("user_whitelist"):
             txn.allowed = False; txn.reject_reason = "❌ 您不在白名单中。"; yield txn; return
-            
+
         if group_id and config.get("group_whitelist") and group_id not in config.get("group_whitelist"):
             txn.allowed = False; txn.reject_reason = "❌ 本群不在白名单中。"; yield txn; return
 
-        # 限流
         if group_id and not await self._check_rate_limit(group_id, config):
             period = config.get("limit_settings", {}).get("rate_limit_period", 60)
             txn.allowed = False
@@ -134,7 +140,6 @@ class StatsManager:
             yield txn
             return
 
-        # 额度
         user_cnt = self.get_user_count(user_id)
         group_cnt = self.get_group_count(group_id) if group_id else 0
 
@@ -157,7 +162,6 @@ class StatsManager:
             yield txn
             return
 
-        # 预扣除
         try:
             if group_limit_on and group_cnt > 0:
                 await self.modify_group_count(group_id, -1)
@@ -165,7 +169,7 @@ class StatsManager:
             elif user_limit_on and user_cnt > 0:
                 await self.modify_user_count(user_id, -1)
                 txn._deducted_user = True
-            
+
             txn.allowed = True
             yield txn
 
@@ -174,14 +178,11 @@ class StatsManager:
             raise e
 
         finally:
-            # 退出逻辑
             if txn._is_failed:
-                logger.info(f"Stats: 任务失败 ({txn._fail_reason})，正在回滚...")
                 if txn._deducted_group and group_id:
                     await self.modify_group_count(group_id, 1)
                 if txn._deducted_user:
                     await self.modify_user_count(user_id, 1)
-                
                 if group_id:
                     self._remove_rate_limit_record(group_id)
             elif txn.allowed:
@@ -209,17 +210,46 @@ class StatsManager:
         await self._save_json(self.group_counts_file, self.group_counts)
         return new_val
 
-    # 看板
-    def has_checked_in_today(self, user_id: str) -> bool:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return self.user_checkin_data.get(str(user_id)) == today
+    # --- 业务逻辑 ---
 
-    async def perform_checkin(self, user_id: str, reward: int) -> int:
-        today = datetime.now().strftime("%Y-%m-%d")
+    async def try_daily_checkin(self, user_id: str, config: Dict[str, Any]) -> CheckInResult:
+        if not config.get("enable_checkin", False):
+            if config.get("enable_checkin_display", False):
+                return CheckInResult(False, 0, "📅 签到功能未开启。")
+            return CheckInResult(False) 
+
         uid = str(user_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if self.user_checkin_data.get(uid) == today:
+             return CheckInResult(False, 0, "📅 您今天已经签到过了。")
+
+        is_random = str(config.get("enable_random_checkin", False)).lower() == 'true'
+        if is_random:
+            base_max = int(config.get("checkin_random_reward_max", 5))
+            reward = random.randint(1, max(1, base_max))
+        else:
+            reward = int(config.get("checkin_fixed_reward", 3))
+
         self.user_checkin_data[uid] = today
         await self._save_json(self.user_checkin_file, self.user_checkin_data)
-        return await self.modify_user_count(uid, reward)
+        await self.modify_user_count(uid, reward)
+        
+        return CheckInResult(True, reward, f"🎉 签到成功！获得 {reward} 次。")
+
+    def get_dashboard_data(self, user_id: str, group_id: Optional[str]) -> DashboardData:
+        today, users, groups = self._get_leaderboard_data()
+
+        return DashboardData(
+            user_count=self.get_user_count(user_id),
+            group_count=self.get_group_count(group_id) if group_id else 0,
+            leaderboard_date=today,
+            top_users=users,
+            top_groups=groups,
+            checkin_result=None
+        )
+
+    # --- Internal Helpers ---
 
     async def record_usage(self, user_id: str, group_id: Optional[str]):
         await self._record_usage_internal(user_id, group_id)
@@ -231,18 +261,18 @@ class StatsManager:
 
         uid = str(user_id)
         self.daily_stats["users"][uid] = self.daily_stats["users"].get(uid, 0) + 1
-        
+
         if group_id:
             gid = str(group_id)
             self.daily_stats["groups"][gid] = self.daily_stats["groups"].get(gid, 0) + 1
-            
+
         await self._save_json(self.daily_stats_file, self.daily_stats)
 
-    def get_leaderboard(self) -> Tuple[str, List[Tuple[str, int]], List[Tuple[str, int]]]:
+    def _get_leaderboard_data(self) -> Tuple[str, List[Tuple[str, int]], List[Tuple[str, int]]]:
         today = datetime.now().strftime("%Y-%m-%d")
         if self.daily_stats.get("date") != today:
             return today, [], []
-            
+
         users_sorted = sorted(self.daily_stats.get("users", {}).items(), key=lambda x: x[1], reverse=True)[:10]
         groups_sorted = sorted(self.daily_stats.get("groups", {}).items(), key=lambda x: x[1], reverse=True)[:10]
         return today, users_sorted, groups_sorted

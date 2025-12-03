@@ -117,5 +117,39 @@ class ImageUtils:
         return img_bytes_list[:max_count]
 
     @staticmethod
+    def _compress_image_sync(raw_bytes: bytes, quality: int = 85, threshold_mb: float = 1.0) -> bytes:
+        """同步压缩"""
+        if len(raw_bytes) <= threshold_mb * 1024 * 1024:
+            return raw_bytes
+
+        try:
+            with io.BytesIO(raw_bytes) as input_io:
+                with PILImage.open(input_io) as img:
+                    # 转换为 RGB (防止 RGBA 转 JPEG 报错)
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+
+                    output_io = io.BytesIO()
+
+                    img.save(output_io, format="JPEG", quality=quality, optimize=True)
+                    compressed_bytes = output_io.getvalue()
+
+                    if len(compressed_bytes) < len(raw_bytes):
+                        logger.info(f"图片压缩: {len(raw_bytes)/1024:.0f}KB -> {len(compressed_bytes)/1024:.0f}KB")
+                        return compressed_bytes
+                    return raw_bytes
+        except Exception as e:
+            logger.warning(f"图片压缩失败 (使用原图): {e}")
+            return raw_bytes
+
+    @classmethod
+    async def compress_image(cls, raw_bytes: bytes, quality: int = 85) -> bytes:
+        """异步包装"""
+        if not raw_bytes:
+            return raw_bytes
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, cls._compress_image_sync, raw_bytes, quality)
+
+    @staticmethod
     async def terminate():
         pass

@@ -3,7 +3,7 @@ from typing import List, Optional, Any
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
-from ..api_client import APIClient, ApiRequestConfig
+from ..api_client import APIClient, ApiRequestConfig, APIError, APIErrorType
 from ..core.stats import StatsManager
 from ..core.prompt import PromptManager
 from ..core.images import ImageUtils
@@ -57,20 +57,30 @@ class GenerationService:
                 enhancer_preset=enhancer_preset
             )
 
-            res = await self.api_client.generate_content(request_config)
-            elapsed = (datetime.now() - start_time).total_seconds()
+            try:
+                image_data = await self.api_client.generate_content(request_config)
 
-            if debug_mode:
-                txn.mark_failed("调试模式")
-                yield event.plain_result(f"{res}\n\n(⏱️ 模拟耗时: {elapsed:.2f}s)\n(调试模式不消耗次数)")
-                return
-            
-            if isinstance(res, bytes):
+                elapsed = (datetime.now() - start_time).total_seconds()
+
                 caption = ResponsePresenter.generation_success(elapsed, self.current_preset_name, enhancer_model_name, enhancer_preset)
-                yield event.chain_result([Image.fromBytes(res), Plain(caption)])
-            else:
-                txn.mark_failed(str(res))
-                yield event.plain_result(ResponsePresenter.generation_failed(str(res), elapsed, is_master))
+                yield event.chain_result([Image.fromBytes(image_data), Plain(caption)])
+
+            except APIError as e:
+                elapsed = (datetime.now() - start_time).total_seconds()
+
+                if e.error_type == APIErrorType.DEBUG_INFO:
+                    txn.mark_failed("调试模式")
+                    msg = ResponsePresenter.debug_info(e.data, elapsed)
+                    yield event.plain_result(msg)
+                    return
+
+                txn.mark_failed(f"{e.error_type.name}: {e.raw_message}")
+                yield event.plain_result(ResponsePresenter.api_error_message(e, is_master))
+
+            except Exception as e:
+                txn.mark_failed(str(e))
+                elapsed = (datetime.now() - start_time).total_seconds()
+                yield event.plain_result(f"❌ 系统内部错误: {e}")
 
     async def run_generation_workflow(self, event: AstrMessageEvent, 
                                   raw_text: str, 

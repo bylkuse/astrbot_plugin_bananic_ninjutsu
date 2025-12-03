@@ -28,8 +28,27 @@ class CommandParser:
     VALUE_KEYS = {"aspect_ratio", "image_size", "timeout", "q", "additional_prompt"}
     OPTIONAL_VALUE_KEYS = {"upscale_prompt"}
 
+    @staticmethod
+    def _strip_prefix(text: str, prefixes: List[str]) -> str:
+        text_lower = text.lower()
+        for p in prefixes:
+            if text_lower.startswith(p):
+                return text[len(p):]
+        return text
+
     @classmethod
-    def parse(cls, event: AstrMessageEvent, cmd_to_remove: str = "") -> ParsedCommand:
+    def parse(cls, event: AstrMessageEvent, cmd_to_remove: str = "", prefixes: List[str] = None) -> ParsedCommand:
+        if prefixes is None: prefixes = []
+        sorted_prefixes = sorted(prefixes, key=len, reverse=True)
+
+        target_cmd = cmd_to_remove.lower()
+
+        target_cmd_pure = target_cmd
+        for p in sorted_prefixes:
+            if target_cmd.startswith(p):
+                target_cmd_pure = target_cmd[len(p):]
+                break
+
         raw_tokens = []
         ats = []
         images = []
@@ -51,11 +70,17 @@ class CommandParser:
         # 移除指令头
         clean_tokens = []
         cmd_removed = False
-        target_cmd = cmd_to_remove.lstrip('#/').lower()
-        
+
         for token in raw_tokens:
             if not cmd_removed and isinstance(token, str):
-                if token.lstrip('#/').lower() == target_cmd:
+                token_lower = token.lower()
+                token_pure = token_lower
+                for p in sorted_prefixes:
+                    if token_lower.startswith(p):
+                        token_pure = token_lower[len(p):]
+                        break
+
+                if token_pure == target_cmd_pure:
                     cmd_removed = True
                     continue
             clean_tokens.append(token)
@@ -70,6 +95,7 @@ class CommandParser:
             
             if isinstance(token, str) and token.startswith("--") and len(token) > 2:
                 raw_key = token[2:]
+                # 处理p1,p2
                 if raw_key.startswith('p') and raw_key[1:].isdigit():
                     key = raw_key
                 else:

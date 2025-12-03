@@ -1,0 +1,184 @@
+{
+	"api_type": {
+        "description": "API类型",
+        "type": "string",
+        "hint": "选择使用的API类型",
+        "default": "Google",
+        "options": [
+            "google",
+            "openai"
+        ]
+    },
+    "api_url": {
+        "description": "API的URL地址",
+        "type": "string",
+        "hint": "图生图和文生图功能均使用此URL。默认为 https://api.bltcy.ai/v1/chat/completions",
+        "default": "https://api.bltcy.ai/v1/chat/completions"
+    },
+    "model": {
+        "description": "默认模型名称",
+        "type": "string",
+        "hint": "图生图和文生图功能均使用此模型。默认为 gemini-2.5-flash-image-preview",
+        "default": "gemini-2.5-flash-image-preview"
+    },
+    "api_keys": {
+        "description": "API 密钥列表",
+        "type": "list",
+        "hint": "可以填写多个密钥，插件会自动轮换使用。使用 #lm 添加key 命令进行管理。",
+        "items": {
+            "type": "string",
+            "description": "API 密钥"
+        },
+        "default": []
+    },
+    "prefix": {
+        "description": "是否要求指令必须带前缀",
+        "type": "bool",
+        "hint": "推荐开启。开启后，指令需要前缀（如 '#'）或 @机器人 才能触发，可避免日常聊天误触。",
+        "default": true
+    },
+    "extra_prefix": {
+        "description": "自定义提示词模式的前缀",
+        "hint": "用于触发自定义prompt，例如设置为 'bnn'，则使用 'bnn <你的prompt>' 来调用",
+        "type": "string",
+        "default": "bnn"
+    },
+    "prompt_enhance_provider_id": {
+        "description": "提示词优化供应商（留空=使用当前会话默认）",
+        "type": "string",
+        "_special": "select_provider",
+        "default": "",
+        "obvious_hint": true
+    },
+    "prompt_enhanced_model": {
+        "description": "可选：强制指定提示词优化模型名（不填用提供商默认）",
+        "type": "string",
+        "default": ""
+    },
+    "optimizer_presets": {
+        "description": "提示词优化预设",
+        "hint": "用于 --up 参数。格式为 预设名:SystemPrompt。使用 #lm优化 进行管理。",
+        "type": "list",
+        "items": {
+            "type": "string",
+            "description": "预设名:Prompt"
+        },
+        "default": [
+            "default:You are a professional prompt engineer for AI image generation. Rewrite the user's description into a detailed, high-quality prompt in English. Add details about lighting, composition, texture, and style. Keep it concise but descriptive. Directly output the final prompt without explanation."
+        ]
+    },
+    "use_proxy": {
+        "description": "是否启用网络代理",
+        "type": "bool",
+        "hint": "如果你的服务器无法直接访问 API 地址，请开启此项",
+        "default": false
+    },
+    "proxy_url": {
+        "description": "网络代理地址",
+        "type": "string",
+        "hint": "格式为 http://user:pass@host:port, 例如 http://127.0.0.1:7890",
+        "default": ""
+    },
+	"timeout": {
+        "description": "超时时间",
+        "type": "int",
+        "hint": "单位：秒，对所有请求有效。大部分正常响应当在90秒内完成（包括4K），尽管超过10分钟仍然有可能出图，但是失败率会很高，不如尽早重试。",
+        "default": "300"
+    },
+    "user_whitelist": {
+        "description": "【权限】用户白名单",
+        "type": "list",
+        "hint": "留空则对所有用户开放。填写后，只有在此列表中的用户才能使用本插件功能（管理员除外）。",
+        "items": { "type": "string", "description": "用户QQ号" },
+        "default": []
+    },
+    "user_blacklist": {
+        "description": "【权限】用户黑名单",
+        "type": "list",
+        "hint": "黑名单优先级最高。在此列表中的用户将无法使用本插件功能（管理员除外）。",
+        "items": { "type": "string", "description": "用户QQ号" },
+        "default": []
+    },
+    "group_whitelist": {
+        "description": "【权限】群聊白名单",
+        "type": "list",
+        "hint": "留空则在所有群聊中可用。填写后，只有在此列表中的群聊才能使用本插件功能。",
+        "items": { "type": "string", "description": "群号" },
+        "default": []
+    },
+    "group_blacklist": {
+        "description": "【权限】群聊黑名单",
+        "type": "list",
+        "hint": "黑名单优先级最高。在此列表中的群聊将无法使用本插件功能。",
+        "items": { "type": "string", "description": "群号" },
+        "default": []
+    },
+    "enable_user_limit": {
+        "description": "【次数限制】是否启用【用户】次数限制",
+        "type": "bool",
+        "hint": "开启后，将根据用户的QQ号独立计算和限制使用次数。",
+        "default": true
+    },
+    "enable_group_limit": {
+        "description": "【次数限制】是否启用【群组】次数限制",
+        "type": "bool",
+        "hint": "开启后，将根据群号计算和限制群内总的使用次数。",
+        "default": false
+    },
+    "enable_checkin": {
+        "description": "【签到系统】是否开启每日签到功能",
+        "type": "bool",
+        "hint": "开启后，用户可使用 #lm签到 命令获取个人次数。",
+        "default": false
+    },
+    "checkin_fixed_reward": {
+        "description": "【签到系统】固定签到奖励次数",
+        "type": "int",
+        "hint": "当“随机签到奖励”关闭时，用户每次签到获得的固定次数。",
+        "default": 3
+    },
+    "enable_random_checkin": {
+        "description": "【签到系统】是否开启随机签到奖励",
+        "type": "bool",
+        "hint": "开启后，签到奖励为1到设置的最大值之间的随机数。关闭则使用下方的固定奖励值。",
+        "default": false
+    },
+    "checkin_random_reward_max": {
+        "description": "【签到系统】随机签到奖励最大值",
+        "type": "int",
+        "hint": "当“随机签到奖励”开启时，用户签到可获得的最高次数（最低为1）。",
+        "default": 5
+    },
+    "prompt_list": {
+        "description": "生图触发词与提示词",
+        "hint": "格式为 触发词:提示词。使用 #lm添加 <触发词>:<提示词> 来动态管理。",
+        "type": "list",
+        "default": [
+            "手办化:Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character. The final image must be in a realistic style and environment.\n\n**Crucial Instruction on Face & Likeness:** The figurine's face is the most critical element. It must be a perfect, high-fidelity 3D translation of the character from the source image. The sculpt must be sharp, clean, and intricately detailed, accurately capturing the original artwork's facial structure, eye style, expression, and hair. The final result must be immediately recognizable as the same character, elevated to a premium physical product standard. Do NOT generate a generic or abstract face.\n\n**Scene Composition (Strictly follow these details):**\n1. **Figurine & Base:** Place the figure on a computer desk. It must stand on a simple, circular, transparent acrylic base WITHOUT any text or markings.\n2. **Computer Monitor:** In the background, a computer monitor must display 3D modeling software (like ZBrush or Blender) with the digital sculpt of the very same figurine visible on the screen.\n3. **Artwork Display:** Next to the computer screen, include a transparent acrylic board with a wooden base. This board holds a print of the original 2D artwork that the figurine is based on.\n4. **Environment:** The overall setting is a desk, with elements like a keyboard to enhance realism. The lighting should be natural and well-lit, as if in a room."
+        ]
+    },
+    "debug_prompt": {
+        "description": "调试模式",
+        "type": "bool",
+        "hint": "仅输出最终提示词，不进行生图。",
+        "default": false
+    },
+    "connection_presets": {
+        "description": "连接预设列表",
+        "type": "list",
+        "hint": "每个元素是一个JSON字符串，包含 name, api_type, api_url, model, api_keys。",
+        "items": {
+            "type": "string",
+            "description": "连接预设的JSON字符串"
+        },
+        "default": [
+            "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://openrouter.ai/api\", \"model\": \"openrouter/perplexity/llama-3-sonar-large-32k-online\", \"api_keys\": []}",
+            "{\"name\": \"GoogleDefault\", \"api_type\": \"google\", \"api_url\": \"https://generativelanguage.googleapis.com\", \"model\": \"gemini-2.5-flash-image-preview\", \"api_keys\": []}"
+        ]
+    },
+    "current_preset_name": {
+        "description": "当前使用的连接预设名称",
+        "type": "string",
+        "default": "GoogleDefault"
+    }
+}

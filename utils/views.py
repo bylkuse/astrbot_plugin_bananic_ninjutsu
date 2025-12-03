@@ -1,8 +1,40 @@
 from typing import Any, Dict, List
 from astrbot.core.message.components import Image, Plain
+from ..api_client import APIError, APIErrorType
 
 class ResponsePresenter:
-    """视图层：构建响应消息"""
+    """视图层"""
+    _ERROR_MESSAGES = {
+        APIErrorType.INVALID_ARGUMENT: "💡请求无效 🔧请检查提示词、参数格式。",
+        APIErrorType.AUTH_FAILED: "💡鉴权失败 🔧Key可能失效或无权限。",
+        APIErrorType.QUOTA_EXHAUSTED: "💡额度耗尽 🔧账户余额不足。",
+        APIErrorType.NOT_FOUND: "💡接入错误 🔧模型名或接口地址有误。",
+        APIErrorType.RATE_LIMIT: "💡超额请求 🔧当前节点或账户受限。",
+        APIErrorType.SERVER_ERROR: "💡网络异常 🔧上游服务波动。",
+        APIErrorType.SAFETY_BLOCK: "❌ 安全拦截 🔧内容可能包含敏感信息，请调整提示词。",
+        APIErrorType.UNKNOWN: "❌ 未知错误 🔧请检查日志详情。",
+    }
+
+    @staticmethod
+    def api_error_message(error: APIError, is_master: bool) -> str:
+        hint = ResponsePresenter._ERROR_MESSAGES.get(error.error_type, error.raw_message)
+        status_info = f" (HTTP {error.status_code})" if error.status_code else ""
+        
+        suggestion = ""
+        if error.error_type != APIErrorType.SAFETY_BLOCK:
+            suggestion = "\n👉 如持续失败，请尝试 #lmc 切换连接"
+
+        detail = ""
+        if error.error_type == APIErrorType.UNKNOWN:
+            detail = f"\n🔍 详情: {error.raw_message[:100]}..."
+
+        msg = f"❌ 生成失败{status_info}\n{hint}{detail}{suggestion}"
+
+        if not is_master:
+             msg += "\n(本次失败不扣除次数)"
+
+        return msg
+
     @staticmethod
     def generating(prompt: str) -> str:
         return f"🎨 正在生成 [{prompt}]..."
@@ -16,13 +48,6 @@ class ResponsePresenter:
         return " | ".join(parts)
 
     @staticmethod
-    def generation_failed(reason: str, elapsed: float, is_master: bool) -> str:
-        msg = f"❌ 生成失败 ({elapsed:.2f}s)\n原因: {reason}"
-        if not is_master: 
-            msg += "\n(本次失败不扣除次数)"
-        return msg
-
-    @staticmethod
     def unauthorized_admin() -> str:
         return "❌ 只有管理员可以执行此操作。"
 
@@ -33,6 +58,53 @@ class ResponsePresenter:
     @staticmethod
     def duplicate_item(item_name: str, key: str) -> str:
         return f"❌ {item_name} [{key}] 已存在。"
+
+    @staticmethod
+    def stats_dashboard(data: Any, group_id: str = None) -> str:
+        msg_parts = []
+
+        if data.checkin_result and data.checkin_result.message:
+            msg_parts.append(data.checkin_result.message)
+
+        quota_msg = f"💳 个人剩余: {data.user_count}次"
+        if group_id:
+            quota_msg += f" | 本群共享: {data.group_count}次"
+        msg_parts.append(quota_msg)
+
+        date = data.leaderboard_date
+        users = data.top_users
+        groups = data.top_groups
+
+        if date:
+            stats_msg = f"\n📊 **今日榜单 ({date})**"
+            has_data = False
+
+            if groups:
+                stats_msg += "\n👥 群组TOP: " + " | ".join([f"群{gid}({count})" for gid, count in groups[:3]])
+                has_data = True
+
+            if users:
+                stats_msg += "\n👤 用户TOP: " + " | ".join([f"{uid}({count})" for uid, count in users[:5]])
+                has_data = True
+
+            if not has_data:
+                stats_msg += "\n💤 暂无数据 (快来抢沙发)"
+
+            msg_parts.append(stats_msg)
+
+        return "\n".join(msg_parts)
+
+    @staticmethod
+    def admin_count_modification(target: str, count: int, new_total: int, is_group: bool = False) -> str:
+        type_str = "群组" if is_group else "用户"
+        return f"✅ 已为{type_str} {target} 增加 {count} 次，当前剩余 {new_total} 次。"
+
+    @staticmethod
+    def admin_query_result(user_id: str, user_count: int, group_id: str = None, group_count: int = 0) -> str:
+        reply = f"用户 {user_id} 个人剩余次数为: {user_count}"
+        if group_id:
+            reply += f"\n本群共享剩余次数为: {group_count}"
+        return reply
 
     @staticmethod
     def connection(is_admin: bool) -> str:
@@ -120,6 +192,27 @@ class ResponsePresenter:
                 f"{cmd_prefix} ren <旧名> <新名> (管理员重命名)"
             ])
         return "\n".join(lines)
+
+    @staticmethod
+    def debug_info(data: Dict[str, Any], elapsed: float) -> str:
+        model_display = data.get("model", "Unknown")
+
+        enhancer = data.get("enhancer_model")
+        preset = data.get("enhancer_preset")
+        if enhancer:
+            preset_info = f"📒{preset}" if preset else ""
+            model_display += f"（✨{enhancer}{preset_info}）"
+
+        prompt = data.get("prompt", "")
+
+        return (
+            f"【🛠️ 调试模式】\n"
+            f"🔗 API: {data.get('api_type')}\n"
+            f"🧠 模型: {model_display}\n"
+            f"🖼️ 图数: {data.get('image_count', 0)}张\n"
+            f"📝 提示词: {prompt}\n\n"
+            f"(⏱️ 模拟耗时: {elapsed:.2f}s)"
+        )
 
     @staticmethod
     def main_menu(bnn_cmd: str) -> str:
