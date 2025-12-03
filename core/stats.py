@@ -32,13 +32,11 @@ class CheckInResult:
 
 @dataclass
 class DashboardData:
-    # ⚠️ 注意：没有默认值的字段必须放在前面
     user_count: int
     group_count: int
     leaderboard_date: str
     top_users: List[Tuple[str, int]]
     top_groups: List[Tuple[str, int]]
-    # ⚠️ 有默认值的字段必须放在最后
     checkin_result: Optional[CheckInResult] = None
 
 class StatsManager:
@@ -210,7 +208,7 @@ class StatsManager:
         await self._save_json(self.group_counts_file, self.group_counts)
         return new_val
 
-    # --- 业务逻辑 ---
+    # --- 业务 ---
 
     async def try_daily_checkin(self, user_id: str, config: Dict[str, Any]) -> CheckInResult:
         if not config.get("enable_checkin", False):
@@ -249,7 +247,7 @@ class StatsManager:
             checkin_result=None
         )
 
-    # --- Internal Helpers ---
+    # --- 辅助方法 ---
 
     async def record_usage(self, user_id: str, group_id: Optional[str]):
         await self._record_usage_internal(user_id, group_id)

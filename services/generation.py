@@ -25,7 +25,7 @@ class GenerationService:
                                  is_master: bool,
                                  enhancer_model_name: Optional[str] = None,
                                  enhancer_preset: Optional[str] = None):
-        """API调用&结果返回"""
+        """调用&返回"""
         sender_id = event.get_sender_id()
         group_id = event.get_group_id()
         display_prompt = prompt[:20] + "..." if len(prompt) > 20 else prompt

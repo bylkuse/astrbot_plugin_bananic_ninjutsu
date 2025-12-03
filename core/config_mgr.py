@@ -4,8 +4,9 @@ import asyncio
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
-from astrbot.api.star import Context # 需要导入 Context 类型以便标注(可选)
+from astrbot.api.star import Context
 
+from ..utils.serializer import ConfigSerializer
 from ..utils.views import ResponsePresenter
 from .prompt import PromptManager
 
@@ -81,9 +82,9 @@ class ConfigManager:
         else:
             async for r in perform_save(): yield r
 
-    async def handle_crud_command(self, event, cmd_list, target_dict, item_name, is_admin, 
-                                  parse_add_func=None, after_delete_callback=None, 
-                                  extra_cmd_handler=None, duplicate_check_type=None):
+    async def handle_crud_command(self, event: AstrMessageEvent, cmd_list: List[str], target_dict: Dict, item_name: str, is_admin: bool, 
+                                  after_delete_callback: Optional[Callable[[str], Awaitable[None]]] = None, 
+                                  extra_cmd_handler: Optional[Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]] = None, duplicate_check_type: Optional[str] = None):
         """增删改查"""
         cmd_text = self.strip_command(event.message_str.strip(), cmd_list)
         parts = cmd_text.split()
@@ -106,12 +107,8 @@ class ConfigManager:
 
         # 增改
         add_key, add_value = None, None
-        if parse_add_func:
-            parsed = parse_add_func(parts, cmd_text)
-            if parsed:
-                add_key, add_value = parsed
-
-        if add_key and add_value is not None:
+        if parsed := ConfigSerializer.parse_single_kv(cmd_text):
+            add_key, add_value = parsed
             if duplicate_check_type and isinstance(add_value, str):
                 dup_key = self.pm.check_duplicate(duplicate_check_type, add_value)
                 if dup_key and dup_key != add_key:
@@ -122,7 +119,7 @@ class ConfigManager:
                 yield res
             return
 
-        if parts and parts[0] not in ["l", "list", "del", "ren"]:
+        if parts and not is_handled and parts[0] not in ["l", "list", "del", "ren"]:
             yield event.plain_result(ResponsePresenter.item_not_found(item_name, parts[0]))
 
     async def _handle_standard_dict_ops(self, event, cmd_parts, target_dict, item_name, cmd_display_name, is_admin, on_delete_callback):
@@ -143,7 +140,8 @@ class ConfigManager:
                 return
 
             msg_lines = [f"✨ {item_name}列表 (详细):"]
-            for name, content in target_dict.items():
+            for name in sorted(target_dict.keys()):
+                content = target_dict[name]
                 content_str = str(content)
                 preview = content_str[:30] + "..." if len(content_str) > 30 else content_str
                 msg_lines.append(f"▪️ [{name}]: {preview}")

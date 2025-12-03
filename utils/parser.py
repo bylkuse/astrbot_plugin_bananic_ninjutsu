@@ -13,7 +13,7 @@ class ParsedCommand:
     images: List[str] = field(default_factory=list)
 
 class CommandParser:
-    """通用指令参数解析器"""
+    """参数解析"""
     KEY_ALIASES = {
         "s": "google_search", "gs": "google_search",
         "ar": "aspect_ratio", 

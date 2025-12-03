@@ -21,7 +21,7 @@ from .utils.views import ResponsePresenter
     "astrbot_plugin_bananic_ninjutsu",
     "LilDawn",
     "适配napcat的Astrbot插件，主攻用于🍌（nano banana）生图的各种奇妙的小巧思。",
-    "0.0.2", 
+    "0.0.3", 
     "https://github.com/bylkuse/astrbot_plugin_bananic_ninjutsu",
 )
 class Ninjutsu(Star):
@@ -79,6 +79,9 @@ class Ninjutsu(Star):
                 return text[len(p):]
         return text
 
+    def _kv_adapter(self, parts, text):
+        return ConfigSerializer.parse_single_kv(text)
+
     # --- Event Handlers ---
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=5)
@@ -131,25 +134,18 @@ class Ninjutsu(Star):
 
     # --- Management Commands ---
 
-    @staticmethod
-    def _parse_simple_kv(parts, text):
-        if ":" in text:
-            k, v = map(str.strip, text.split(":", 1))
-            return (k, v) if k and v else None
-        return None
-
     @filter.command("lm优化", alias={"lmo"}, prefix_optional=True)
     async def on_optimizer_management(self, event: AstrMessageEvent):
         async for res in self.config_mgr.handle_crud_command(
             event, ["lm优化", "lmo"], self.pm.get_target_dict("optimizer"), "优化预设", 
-            self.is_global_admin(event), self._parse_simple_kv, duplicate_check_type="optimizer"
+            self.is_global_admin(event), duplicate_check_type="optimizer"
         ): yield res
 
     @filter.command("lm预设", alias={"lmp"}, prefix_optional=True)
     async def on_preset_management(self, event: AstrMessageEvent):
         async for res in self.config_mgr.handle_crud_command(
             event, ["lm预设", "lmp"], self.pm.get_target_dict("prompt"), "生图预设", 
-            self.is_global_admin(event), self._parse_simple_kv, duplicate_check_type="prompt"
+            self.is_global_admin(event), duplicate_check_type="prompt"
         ): yield res
 
     @filter.command("lm连接", alias={"lmc"}, prefix_optional=True)
@@ -208,9 +204,14 @@ class Ninjutsu(Star):
             return None
 
         async for res in self.config_mgr.handle_crud_command(
-            event, ["lm连接", "lmc"], self.connection_presets, "连接预设", 
-            is_admin, parse_connection_add, after_delete, handle_extras
+            event, ["lm连接", "lmc"], self.connection_presets, "连接预设", is_admin, 
+            after_delete_callback=after_delete, 
+            extra_cmd_handler=handle_extras
         ): yield res
+
+        if parsed := parse_connection_add(self.config_mgr.strip_command(event.message_str.strip(), ["lm连接", "lmc"]).split(), ""):
+            key, value = parsed
+            async for r in self.config_mgr.perform_save_with_confirm(event, self.connection_presets, key, value, "连接预设"): yield r
 
         await self._save_connections()
 

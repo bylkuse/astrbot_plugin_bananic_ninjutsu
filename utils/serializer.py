@@ -1,17 +1,24 @@
 import json
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 class ConfigSerializer:
-    """序列化&反序列化，解决配置不支持 Dict 的限制"""
+    """序列化，兼容性妥协"""
+    @staticmethod
+    def parse_single_kv(text: str, separator: str = ":") -> Optional[tuple[str, str]]:
+        if separator in text:
+            k, v = text.split(separator, 1)
+            k, v = k.strip(), v.strip()
+            if k and v:
+                return k, v
+        return None
+
     @staticmethod
     def load_kv_list(data_list: List[str]) -> Dict[str, str]:
         result = {}
         if not data_list: return result
         for item in data_list:
-            if not isinstance(item, str): continue
-            if ":" in item:
-                k, v = item.split(":", 1)
-                result[k.strip()] = v.strip()
+            if kv := ConfigSerializer.parse_single_kv(item):
+                result[kv[0]] = kv[1]
         return result
 
     @staticmethod

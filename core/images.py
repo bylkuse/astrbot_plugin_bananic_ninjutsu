@@ -125,7 +125,6 @@ class ImageUtils:
         try:
             with io.BytesIO(raw_bytes) as input_io:
                 with PILImage.open(input_io) as img:
-                    # 转换为 RGB (防止 RGBA 转 JPEG 报错)
                     if img.mode in ("RGBA", "P"):
                         img = img.convert("RGB")
 

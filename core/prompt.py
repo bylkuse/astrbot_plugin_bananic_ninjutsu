@@ -32,23 +32,9 @@ class PromptManager:
         self.optimizer_presets = ConfigSerializer.load_kv_list(raw_opt_list)
     
         if "default" not in self.optimizer_presets:
-            self.optimizer_presets["default"] = "You are a professional prompt engineer..."
+            self.optimizer_presets["default"] = "You are a professional prompt engineer. Rewrite the user's description into a detailed prompt."
         
         logger.info(f"PromptManager: 已加载 {len(self.prompt_map)} 个生图预设, {len(self.optimizer_presets)} 个优化预设")
-
-    def load_optimizer_presets(self):
-        self.optimizer_presets.clear()
-        raw_presets = self.config.get("optimizer_presets", [])
-
-        for item in raw_presets:
-            if ":" in item:
-                k, v = item.split(":", 1)
-                self.optimizer_presets[k.strip()] = v.strip()
-
-        if "default" not in self.optimizer_presets:
-            self.optimizer_presets["default"] = (
-                "You are a professional prompt engineer. Rewrite the user's description into a detailed prompt."
-            )
 
     def get_preset(self, key: str) -> Optional[str]:
         return self.prompt_map.get(key)
@@ -83,75 +69,77 @@ class PromptManager:
         return None
 
     async def process_variables(self, prompt: str, params: dict, event: Optional[AstrMessageEvent] = None) -> str:
-        if not prompt or '%' not in prompt:
-            return prompt
+        if not prompt or '%' not in prompt: return prompt
 
-        target_user_id = None
-        if event: target_user_id = event.get_sender_id()
-
+        target_user_id = event.get_sender_id() if event else None
         q_param = params.get('q')
         if q_param:
             if isinstance(q_param, str) and q_param.isdigit(): target_user_id = q_param
             elif isinstance(q_param, At): target_user_id = str(q_param.qq)
             elif q_param is True and event:
-                if 'first_at' in params and isinstance(params['first_at'], At):
-                    target_user_id = str(params['first_at'].qq)
-                else:
-                    first_at = next((s for s in event.message_obj.message if isinstance(s, At)), None)
-                    if first_at: target_user_id = str(first_at.qq)
+                first_at = params.get('first_at') or next((s for s in event.message_obj.message if isinstance(s, At)), None)
+                if first_at: target_user_id = str(first_at.qq)
 
-        user_info = {}
-        if event and ('%age%' in prompt or '%bd%' in prompt) and target_user_id:
+        user_age, user_birthday = "", ""
+        if event and target_user_id and ('%age%' in prompt or '%bd%' in prompt):
             try:
-                user_info = await event.bot.get_stranger_info(user_id=int(target_user_id), no_cache=True)
+                info = await event.bot.get_stranger_info(user_id=int(target_user_id), no_cache=True)
+                user_age = str(info.get('age', ''))
+                if (m := info.get('birthday_month')) and (d := info.get('birthday_day')):
+                    user_birthday = f"{m}月{d}日"
+                elif y := info.get('birthday_year'):
+                    user_birthday = f"{y}年"
             except Exception: pass
 
-        user_age = str(user_info.get('age', ''))
+        if event:
+            ctx_map = {
+                '%g%': lambda: self.get_group_name(event),
+                '%un%': lambda: self.get_user_nickname(event, target_user_id),
+                '%run%': lambda: self.get_random_member_nickname(event),
+                '%uid%': lambda: target_user_id
+            }
 
-        b_month = user_info.get('birthday_month')
-        b_day = user_info.get('birthday_day')
+            for k, func in ctx_map.items():
+                if k in prompt:
+                    res = func()
+                    if asyncio.iscoroutine(res): res = await res
+                    prompt = prompt.replace(k, str(res))
 
-        if b_month and b_day:
-            user_birthday = f"{b_month}月{b_day}日"
-        elif user_info.get('birthday_year'):
-            user_birthday = f"{user_info.get('birthday_year')}年"
-        else:
-            user_birthday = ""
+        func_map = {
+            'r': lambda v: random.choice(v.split('|')) if v else '',
+            'rn': lambda v: str(random.randint(*map(int, v.split('-')))),
+            'rl': lambda v: ''.join(random.choices(string.ascii_letters, k=int(v))),
+        }
 
-        escaped_placeholder = "___ESCAPED___"
+        val_map = {
+            'rc': lambda: random.choice(self.color_list),
+            't': lambda: datetime.now().strftime("%H:%M:%S"),
+            'd': lambda: datetime.now().strftime("%m月%d日"),
+            'age': lambda: user_age,
+            'bd': lambda: user_birthday,
+            'wd': lambda: f"星期{'日一二三四五六'[int(datetime.now().strftime('%w'))]}"
+        }
 
-        for i in range(5): 
+        escaped = "___ESCAPED___"
+        for _ in range(5):
             if '%' not in prompt: break
-
-            prompt = prompt.replace("%%", escaped_placeholder)
+            prompt = prompt.replace("%%", escaped)
 
             prompt = re.sub(r'%p(\d*)?(?::([^%]*))?%', 
-                            lambda m: str(params.get(f'p{m.group(1) or ""}', m.group(2) or '')), 
-                            prompt)
+                          lambda m: str(params.get(f'p{m.group(1) or ""}', m.group(2) or '')), prompt)
 
-            if event and i == 0:
-                if '%g%' in prompt: prompt = prompt.replace('%g%', await self.get_group_name(event))
-                if '%un%' in prompt: prompt = prompt.replace('%un%', await self.get_user_nickname(event, target_user_id))
-                if '%uid%' in prompt: prompt = prompt.replace('%uid%', str(target_user_id))
-                if '%run%' in prompt: prompt = prompt.replace('%run%', await self.get_random_member_nickname(event))
-
-            def replacer(match):
-                c = match.group(1)
+            def replacer(m):
+                raw = m.group(1)
                 try:
-                    if c.startswith('r:'): return random.choice(c[2:].split('|')) if c[2:] else ''
-                    if c.startswith('rn:'): a,b = map(int, c[3:].split('-')); return str(random.randint(a,b))
-                    if c.startswith('rl:'): return ''.join(random.choices(string.ascii_letters, k=int(c[3:])))
-                    if c == 'rc': return random.choice(self.color_list)
-                    if c == 't': return datetime.now().strftime("%H:%M:%S")
-                    if c == 'd': return datetime.now().strftime("%m月%d日")
-                    if c == 'age': return user_age
-                    if c == 'bd': return user_birthday
-                except Exception: return match.group(0)
-                return match.group(0)
+                    if kv := ConfigSerializer.parse_single_kv(raw):
+                        k, v = kv
+                        return str(func_map[k](v)) if k in func_map else m.group(0)
+                    return str(val_map[raw]()) if raw in val_map else m.group(0)
+                except Exception: return m.group(0)
 
             prompt = re.sub(r'%([a-zA-Z0-9_:|]+?)%', replacer, prompt)
 
-        return prompt.replace(escaped_placeholder, "%")
+        return prompt.replace(escaped, "%")
 
     async def get_group_name(self, event: AstrMessageEvent) -> str:
         if not isinstance(event, AiocqhttpMessageEvent) or event.is_private_chat():
