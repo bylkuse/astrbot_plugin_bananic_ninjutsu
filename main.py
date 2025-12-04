@@ -361,6 +361,7 @@ class Ninjutsu(Star):
             yield event.plain_result(f"❌ 操作失败: {e}")
 
     async def terminate(self):
+        await self.stats.stop_auto_save()
         await ImageUtils.terminate()
 
         logger.info("[香蕉忍法帖] 插件已终止")

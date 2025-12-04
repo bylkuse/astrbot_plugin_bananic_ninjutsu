@@ -55,12 +55,74 @@ class StatsManager:
         self._rate_limit_buckets: Dict[str, List[float]] = {}
         self._rate_limit_lock = asyncio.Lock()
 
+        self._dirty_flags: set[str] = set()
+        self._auto_save_task: Optional[asyncio.Task] = None
+        self._save_interval = 30
+
+    # --- 数据 ---
+
     async def load_all_data(self):
         self.user_counts = await self._load_json(self.user_counts_file, {})
         self.group_counts = await self._load_json(self.group_counts_file, {})
         self.user_checkin_data = await self._load_json(self.user_checkin_file, {})
         self.daily_stats = await self._load_json(self.daily_stats_file, {"date": "", "users": {}, "groups": {}})
         logger.info(f"StatsManager: 数据加载完成。当前记录日期: {self.daily_stats.get('date', '无')}")
+
+        self.start_auto_save() # 缓存回写
+
+    def start_auto_save(self):
+        if self._auto_save_task is None or self._auto_save_task.done():
+            self._auto_save_task = asyncio.create_task(self._auto_save_loop())
+            logger.debug("StatsManager: 自动保存任务已启动")
+
+    async def stop_auto_save(self):
+        if self._auto_save_task:
+            self._auto_save_task.cancel()
+            try:
+                await self._auto_save_task
+            except asyncio.CancelledError:
+                pass
+            self._auto_save_task = None
+
+        await self._flush_dirty_data()
+        logger.info("StatsManager: 数据已同步到磁盘，任务终止。")
+
+    async def _auto_save_loop(self):
+        while True:
+            try:
+                await asyncio.sleep(self._save_interval)
+                await self._flush_dirty_data()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"自动保存循环发生异常: {e}")
+                await asyncio.sleep(5)
+
+    async def _flush_dirty_data(self):
+        if not self._dirty_flags:
+            return
+
+        pending_saves = list(self._dirty_flags)
+
+        try:
+            if "user_counts" in pending_saves:
+                await self._save_json(self.user_counts_file, self.user_counts)
+                self._dirty_flags.discard("user_counts")
+
+            if "group_counts" in pending_saves:
+                await self._save_json(self.group_counts_file, self.group_counts)
+                self._dirty_flags.discard("group_counts")
+
+            if "checkin" in pending_saves:
+                await self._save_json(self.user_checkin_file, self.user_checkin_data)
+                self._dirty_flags.discard("checkin")
+
+            if "daily" in pending_saves:
+                await self._save_json(self.daily_stats_file, self.daily_stats)
+                self._dirty_flags.discard("daily")
+
+        except Exception as e:
+            logger.error(f"数据回写失败: {e}")
 
     async def _load_json(self, file_path: Path, default: Any) -> Any:
         if not file_path.exists(): return default
@@ -186,8 +248,6 @@ class StatsManager:
             elif txn.allowed:
                 await self._record_usage_internal(user_id, group_id)
 
-    # --- 数据 ---
-
     def get_user_count(self, user_id: str) -> int:
         return self.user_counts.get(str(user_id), 0)
 
@@ -199,7 +259,7 @@ class StatsManager:
         current = self.user_counts.get(uid, 0)
         new_val = max(0, current + delta)
         self.user_counts[uid] = new_val
-        await self._save_json(self.user_counts_file, self.user_counts)
+        self._dirty_flags.add("user_counts")
         return new_val
 
     async def modify_group_count(self, group_id: str, delta: int) -> int:
@@ -207,10 +267,8 @@ class StatsManager:
         current = self.group_counts.get(gid, 0)
         new_val = max(0, current + delta)
         self.group_counts[gid] = new_val
-        await self._save_json(self.group_counts_file, self.group_counts)
+        self._dirty_flags.add("group_counts")
         return new_val
-    
-    # --- 业务 ---
 
     async def modify_resource(self, target_id: str, count: int, is_group: bool) -> int:
         if is_group:
@@ -254,7 +312,7 @@ class StatsManager:
             reward = int(config.get("checkin_fixed_reward", 3))
 
         self.user_checkin_data[uid] = today
-        await self._save_json(self.user_checkin_file, self.user_checkin_data)
+        self._dirty_flags.add("checkin")
         await self.modify_user_count(uid, reward)
         
         return CheckInResult(True, reward, f"🎉 签到成功！获得 {reward} 次。")
@@ -271,7 +329,7 @@ class StatsManager:
             gid = str(group_id)
             self.daily_stats["groups"][gid] = self.daily_stats["groups"].get(gid, 0) + 1
 
-        await self._save_json(self.daily_stats_file, self.daily_stats)
+        self._dirty_flags.add("daily")
 
     def _get_leaderboard_data(self) -> Tuple[str, List[Tuple[str, int]], List[Tuple[str, int]]]:
         today = datetime.now().strftime("%Y-%m-%d")
