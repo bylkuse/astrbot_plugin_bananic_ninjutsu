@@ -21,7 +21,7 @@ from .utils.views import ResponsePresenter
     "astrbot_plugin_bananic_ninjutsu",
     "LilDawn",
     "适配napcat的Astrbot插件，主攻用于🍌（nano banana）生图的各种奇妙的小巧思。",
-    "0.0.3", 
+    "0.0.4", 
     "https://github.com/bylkuse/astrbot_plugin_bananic_ninjutsu",
 )
 class Ninjutsu(Star):

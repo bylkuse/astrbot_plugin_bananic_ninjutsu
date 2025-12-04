@@ -28,6 +28,7 @@ class CommandParser:
 
     VALUE_KEYS = {"aspect_ratio", "image_size", "timeout", "q", "additional_prompt"}
     OPTIONAL_VALUE_KEYS = {"upscale_prompt"}
+    BOOLEAN_VALUE_KEYS = {"thinking"}
 
     @staticmethod
     def _strip_prefix(text: str, prefixes: List[str]) -> str:
@@ -53,7 +54,7 @@ class CommandParser:
         raw_tokens = []
         ats = []
         images = []
-        
+
         # 拆解&提取
         if hasattr(event.message_obj, 'message'):
             for seg in event.message_obj.message:
@@ -67,7 +68,7 @@ class CommandParser:
                 elif isinstance(seg, Image):
                     if seg.url: images.append(seg.url)
                     elif seg.file: images.append(seg.file)
-        
+
         # 移除指令头
         clean_tokens = []
         cmd_removed = False
@@ -86,14 +87,13 @@ class CommandParser:
                     continue
             clean_tokens.append(token)
 
-        # 参数解析循环
+        # 解析循环
         params = {}
         final_text_parts = []
-        
+
         i = 0
         while i < len(clean_tokens):
             token = clean_tokens[i]
-            
             if isinstance(token, str) and token.startswith("--") and len(token) > 2:
                 raw_key = token[2:]
                 # 处理p1,p2
@@ -118,6 +118,13 @@ class CommandParser:
                         i += 2
                     else:
                         params[key] = "default"
+                        i += 1
+                elif key in cls.BOOLEAN_VALUE_KEYS:
+                    if next_token and isinstance(next_token, str) and next_token.lower() in ("true", "false", "1", "0", "on", "off"):
+                        params[key] = next_token
+                        i += 2
+                    else:
+                        params[key] = True
                         i += 1
                 else:
                     params[key] = True

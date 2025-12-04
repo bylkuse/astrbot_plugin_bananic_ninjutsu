@@ -38,7 +38,7 @@ class ConfigManager:
 
         prefix_pattern = "|".join(re.escape(p) for p in self.prefixes)
         alias_pattern = "|".join(re.escape(c) for c in sorted_aliases)
-        
+
         pattern = fr'^({prefix_pattern})?({alias_pattern})\s*'
         return re.sub(pattern, '', text, count=1, flags=re.IGNORECASE).strip()
 
@@ -207,7 +207,5 @@ class ConfigManager:
             key = cmd_parts[0]
             if key in target_dict:
                 content = target_dict[key]
-                if isinstance(content, dict):
-                    content = json.dumps(content, indent=2, ensure_ascii=False)
-                yield event.plain_result(f"📝 {item_name} [{key}] 内容:\n{content}")
+                yield event.plain_result(ResponsePresenter.format_preset_detail(item_name, key, content))
                 return

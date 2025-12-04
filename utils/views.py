@@ -1,4 +1,6 @@
-from typing import Any, Dict, List
+import re
+import json
+from typing import Any, Dict, List, Callable, Optional, Union
 from astrbot.core.message.components import Image, Plain
 from ..api_client import APIError, APIErrorType
 
@@ -15,25 +17,63 @@ class ResponsePresenter:
         APIErrorType.UNKNOWN: "❌ 未知错误 🔧请检查日志详情。",
     }
 
+    VAR_NAMES = {
+        "un": "昵称", "uid": "QQ号", "age": "年龄", "bd": "生日",
+        "g": "群名", "run": "随机群友",
+        "r": "随机选项", "rn": "随机数", "rl": "随机字母", "rc": "随机颜色",
+        "d": "日期", "t": "时间", "wd": "星期"
+    }
+
+    VAR_RULES = [
+        (
+            r'%p(\d*)(?::[^%]*)?%', 
+            "🔧 填空参数", 
+            lambda m: f"--p{m}" if m else "--p", # 特殊处理: 转换成指令参数
+            "请在指令后追加对应参数。"
+        ),
+        (
+            r'%(un|uid|age|bd)%', 
+            "👤 用户信息", 
+            "VAR_NAMES", # 使用通用映射
+            "默认为发送者，可用 --q @某人 指定获取目标。"
+        ),
+        (
+            r'%(g|run)%', 
+            "👯 群组互动", 
+            "VAR_NAMES",
+            None
+        ),
+        (
+            r'%(r|rn|rl|rc)(?::[^%]*)?%', 
+            "🎲 随机变量", 
+            "VAR_NAMES", 
+            "每次生成结果不同。"
+        ),
+        (
+            r'%(d|t|wd)%', 
+            "📅 时间日期", 
+            "VAR_NAMES", 
+            None
+        )
+    ]
+
     @staticmethod
     def api_error_message(error: APIError, is_master: bool) -> str:
         hint = ResponsePresenter._ERROR_MESSAGES.get(error.error_type, error.raw_message)
         status_info = f" (HTTP {error.status_code})" if error.status_code else ""
-        
-        suggestion = ""
-        if error.error_type != APIErrorType.SAFETY_BLOCK:
-            suggestion = "\n👉 如持续失败，请尝试 #lmc 切换连接"
 
-        detail = ""
+        parts = [f"❌ 生成失败{status_info}", hint]
+
         if error.error_type == APIErrorType.UNKNOWN:
-            detail = f"\n🔍 详情: {error.raw_message[:100]}..."
+            parts.append(f"🔍 详情: {error.raw_message[:100]}...")
 
-        msg = f"❌ 生成失败{status_info}\n{hint}{detail}{suggestion}"
+        if error.error_type != APIErrorType.SAFETY_BLOCK:
+            parts.append("👉 如持续失败，请尝试 #lmc 切换连接")
 
         if not is_master:
-             msg += "\n(本次失败不扣除次数)"
+            parts.append("(本次失败不扣除次数)")
 
-        return msg
+        return "\n".join(parts)
 
     @staticmethod
     def generating(prompt: str) -> str:
@@ -62,7 +102,6 @@ class ResponsePresenter:
     @staticmethod
     def stats_dashboard(data: Any, group_id: str = None) -> str:
         msg_parts = []
-
         if data.checkin_result and data.checkin_result.message:
             msg_parts.append(data.checkin_result.message)
 
@@ -71,26 +110,19 @@ class ResponsePresenter:
             quota_msg += f" | 本群共享: {data.group_count}次"
         msg_parts.append(quota_msg)
 
-        date = data.leaderboard_date
-        users = data.top_users
-        groups = data.top_groups
-
-        if date:
-            stats_msg = f"\n📊 **今日榜单 ({date})**"
+        if data.leaderboard_date:
+            stats_msg = [f"\n📊 **今日榜单 ({data.leaderboard_date})**"]
             has_data = False
 
-            if groups:
-                stats_msg += "\n👥 群组TOP: " + " | ".join([f"群{gid}({count})" for gid, count in groups[:3]])
+            if data.top_groups:
+                stats_msg.append("👥 群组TOP: " + " | ".join([f"群{gid}({c})" for gid, c in data.top_groups[:3]]))
+                has_data = True
+            if data.top_users:
+                stats_msg.append("👤 用户TOP: " + " | ".join([f"{uid}({c})" for uid, c in data.top_users[:5]]))
                 has_data = True
 
-            if users:
-                stats_msg += "\n👤 用户TOP: " + " | ".join([f"{uid}({count})" for uid, count in users[:5]])
-                has_data = True
-
-            if not has_data:
-                stats_msg += "\n💤 暂无数据 (快来抢沙发)"
-
-            msg_parts.append(stats_msg)
+            if not has_data: stats_msg.append("💤 暂无数据 (快来抢沙发)")
+            msg_parts.append("\n".join(stats_msg))
 
         return "\n".join(msg_parts)
 
@@ -154,7 +186,6 @@ class ResponsePresenter:
     def format_key_list(name: str, keys: List[str]) -> str:
         if not keys:
             return f"🔑 预设 [{name}] 暂无配置任何 Key。"
-
         lines = [f"🔑 预设 [{name}] 密钥列表 (共{len(keys)}个):"]
         for i, k in enumerate(keys):
             if len(k) > 12:
@@ -163,7 +194,6 @@ class ResponsePresenter:
                 masked_key = k 
 
             lines.append(f"{i+1}. {masked_key}")
-        
         lines.append("\n💡 指令提示: #lmk del <预设名> <序号> 删除指定Key")
         return "\n".join(lines)
 
@@ -211,7 +241,6 @@ class ResponsePresenter:
             f"🧠 模型: {model_display}\n"
             f"🖼️ 图数: {data.get('image_count', 0)}张\n"
             f"📝 提示词: {prompt}\n\n"
-            f"🧐 思维链: {data.get('thinking', False)}\n"
             f"(⏱️ 模拟耗时: {elapsed:.2f}s)"
         )
 
@@ -292,25 +321,64 @@ class ResponsePresenter:
   --up <优化意见> ▸ 让AI根据你的意见优化提示词
   --up <优化预设名> ▸ 使用特定的提示词优化预设（default、审查等）"""
 
-    @staticmethod
-    def help_vars() -> str:
-        return """🔁 【奥义•缭乱变量杀阵】
-🧙<在提示词、参数a和预设中使用>
-● 用户信息 (默认自己，可配合 --q 指定目标)
-%un% : 用户昵称
-%uid% : 用户QQ号
-%age% : 用户年龄
-%bd% : 用户生日
-● 群组信息
-%g% : 当前群名称
-%run% : 随机群友昵称
-● 时间日期
-%d% : 日期 (如 11月30日)
-%dd% : 完整日期 (如 2023年11月30日)
-%t% : 当前时间 (HH:MM:SS)
-%wd% : 星期几
-● 随机生成
-%r:A|B|C% : 从选项 A, B, C 中随机选择一个
-%rc% : 随机颜色 (Red, Blue...)
-%rn:1-100% : 指定范围内的随机整数
-%rl:5% : 随机5个大小写字母"""
+    @classmethod
+    def format_preset_detail(cls, item_name: str, key: str, content: Any) -> str:
+        content_str = str(content)
+        if isinstance(content, dict):
+            content_str = json.dumps(content, indent=2, ensure_ascii=False)
+
+        msg_parts = [f"📝 {item_name} [{key}] 内容:\n{content_str}"]
+
+        if isinstance(content, str):
+            hints = []
+
+            for pattern, title, logic, extra_msg in cls.VAR_RULES:
+                raw_matches = set(re.findall(pattern, content, re.IGNORECASE))
+                if not raw_matches:
+                    continue
+
+                clean_items = []
+                for m in raw_matches:
+                    val = m if isinstance(m, str) else next((x for x in m if x), "")
+
+                    display_text = ""
+                    if callable(logic):
+                        display_text = logic(val)
+                    elif logic == "VAR_NAMES":
+                        cn_name = cls.VAR_NAMES.get(val, val)
+                        display_text = f"%{val}%({cn_name})"
+                    else:
+                        display_text = f"%{val}%"
+
+                    clean_items.append(display_text)
+
+                item_str = ", ".join(sorted(clean_items))
+                full_hint = f"{title}: 包含 {item_str}。"
+                if extra_msg:
+                    full_hint += f" {extra_msg}"
+                hints.append(full_hint)
+
+            if hints:
+                msg_parts.append("\n💡 **变量用法提示**:")
+                msg_parts.extend([f"  ▸ {h}" for h in hints])
+
+        return "\n".join(msg_parts)
+
+    @classmethod
+    def help_vars(cls) -> str:
+
+        lines = ["🔁 【奥义•缭乱变量杀阵】", "🧙<在提示词、参数a和预设中使用>"]
+
+        help_defs = [
+            ("🔧 自定义填空", "配合 --p 使用 (如 %p%→--p, %p2%→--p2)"),
+            ("👤 用户信息", "%un%(昵称), %uid%(QQ), %age%(年龄), %bd%(生日)"),
+            ("👯 群组互动", "%g%(群名), %run%(随机群友)"),
+            ("🎲 随机生成", "%r:A|B%(选项), %rn:1-10%(数字), %rc%(颜色)"),
+            ("📅 时间日期", "%d%(日期), %t%(时间), %wd%(星期)")
+        ]
+
+        for cat, desc in help_defs:
+            lines.append(f"● {cat}")
+            lines.append(f"  {desc}")
+
+        return "\n".join(lines)

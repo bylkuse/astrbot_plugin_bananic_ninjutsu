@@ -40,6 +40,13 @@ class GenerationService:
             start_time = datetime.now()
             debug_mode = self.conf.get("debug_prompt", False)
 
+            raw_thinking = params.get("thinking", False)
+            thinking_val = False
+            if isinstance(raw_thinking, str):
+                thinking_val = raw_thinking.lower() in ("true", "1", "on", "yes")
+            else:
+                thinking_val = bool(raw_thinking)
+
             request_config = ApiRequestConfig(
                 api_keys=self.conf.get("api_keys", []),
                 api_type=self.conf.get("api_type", "google"),
@@ -55,7 +62,7 @@ class GenerationService:
                 debug_mode=debug_mode,
                 enhancer_model_name=enhancer_model_name,
                 enhancer_preset=enhancer_preset,
-                thinking=bool(params.get("thinking", False))
+                thinking=thinking_val
             )
 
             try:
