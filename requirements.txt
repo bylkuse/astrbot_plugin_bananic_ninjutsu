@@ -1,0 +1,3 @@
+aiohttp
+Pillow
+google-genai
