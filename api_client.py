@@ -7,7 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 from PIL import Image as PILImage
@@ -18,6 +18,11 @@ from google.genai.types import (
     HttpOptions,
     Tool,
 )
+
+try:
+    from google.genai.types import ThinkingConfig
+except ImportError:
+    ThinkingConfig = None
 
 from .core.images import ImageUtils
 
@@ -58,6 +63,12 @@ class ApiRequestConfig:
     debug_mode: bool = False
     enhancer_model_name: Optional[str] = None
     enhancer_preset: Optional[str] = None
+    thinking: bool = False
+
+@dataclass
+class GenResult:
+    image: bytes
+    thoughts: str = ""
 
 class APIClient:
     # 错误映射
@@ -162,7 +173,6 @@ class APIClient:
             if code_match or keyword_match:
                 return APIError(error_type, str(e), status_code), should_switch_key
 
-        # 兜底
         return APIError(APIErrorType.UNKNOWN, str(e), status_code), False
 
     async def _process_and_validate_images(self, config: ApiRequestConfig) -> List[bytes]:
@@ -190,7 +200,7 @@ class APIClient:
 
         return valid_images
 
-    async def generate_content(self, config: ApiRequestConfig) -> bytes:
+    async def generate_content(self, config: ApiRequestConfig) -> GenResult:
         if not config.api_keys:
             raise APIError(APIErrorType.AUTH_FAILED, "未配置有效的 API Key")
 
@@ -203,7 +213,8 @@ class APIClient:
                 "prompt": config.prompt,
                 "image_count": len(processed_images),
                 "enhancer_model": config.enhancer_model_name,
-                "enhancer_preset": config.enhancer_preset
+                "enhancer_preset": config.enhancer_preset,
+                "thinking": config.thinking
             }
             raise APIError(APIErrorType.DEBUG_INFO, "调试模式阻断", data=debug_data)
 
@@ -217,7 +228,8 @@ class APIClient:
             
             try:
                 if config.api_type == "openai":
-                    return await self._call_openai(api_key, config, processed_images)
+                    image_bytes = await self._call_openai(api_key, config, processed_images)
+                    return GenResult(image=image_bytes)
                 else:
                     return await self._call_google(api_key, config, processed_images)
             
@@ -249,7 +261,7 @@ class APIClient:
         else:
             raise APIError(APIErrorType.UNKNOWN, "请求流程异常结束，未产生结果")
 
-    async def _call_google(self, api_key: str, config: ApiRequestConfig, processed_images: List[bytes]) -> bytes:
+    async def _call_google(self, api_key: str, config: ApiRequestConfig, processed_images: List[bytes]) -> GenResult:
         contents = []
         if config.prompt:
             contents.append(config.prompt)
@@ -276,6 +288,13 @@ class APIClient:
         if config.image_size:
             image_config["image_size"] = config.image_size
 
+        thinking_config = None
+        if config.thinking:
+            if ThinkingConfig:
+                thinking_config = ThinkingConfig(include_thoughts=True)
+            else:
+                logger.warning("ThinkingConfig 导入失败，跳过思维链配置。请更新 google-genai SDK。")
+
         sdk_retries = 1
         last_exception = None
 
@@ -286,10 +305,11 @@ class APIClient:
                     model=full_model_name,
                     contents=contents,
                     config=GenerateContentConfig.model_construct(
-                        response_modalities=['Text', 'Image'],
+                        response_modalities=['Text', 'Image'], # 显式请求 Text 和 Image
                         max_output_tokens=2048,
                         tools=tools if tools else None,
-                        image_config=image_config if image_config else None
+                        image_config=image_config if image_config else None,
+                        thinking_config=thinking_config
                     )
                 )
 
@@ -308,13 +328,28 @@ class APIClient:
                     elif reason not in ['STOP', 'MAX_TOKENS']:
                          raise APIError(APIErrorType.SERVER_ERROR, f"生成异常中断: {reason}")
 
+                found_image = None
+                thoughts_text = []
+
                 for part in candidate.content.parts:
                     if hasattr(part, 'inline_data') and part.inline_data:
-                        return part.inline_data.data
+                        found_image = part.inline_data.data
 
-                text_resp = "".join([part.text for part in candidate.content.parts if hasattr(part, 'text') and part.text])
-                if text_resp:
-                    raise APIError(APIErrorType.UNKNOWN, f"API 仅回复了文本: {text_resp}")
+                    elif hasattr(part, 'thought') and part.thought: 
+                        if hasattr(part, 'text') and part.text:
+                            thoughts_text.append(part.text)
+                    elif hasattr(part, 'text') and part.text:
+                        thoughts_text.append(part.text)
+
+                if found_image:
+                    return GenResult(
+                        image=found_image,
+                        thoughts="\n".join(thoughts_text)
+                    )
+
+                all_text = "".join(thoughts_text)
+                if all_text:
+                    raise APIError(APIErrorType.UNKNOWN, f"API 仅回复了文本 (Thinking?): {all_text}")
 
                 raise APIError(APIErrorType.UNKNOWN, "未收到有效的图片数据")
 
@@ -331,7 +366,6 @@ class APIClient:
                 else:
                     raise error_obj
 
-        # 兜底
         error_obj, _ = self._analyze_exception(last_exception)
         raise error_obj
 

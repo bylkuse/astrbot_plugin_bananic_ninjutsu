@@ -54,16 +54,27 @@ class GenerationService:
                 proxy_url=self.conf.get("proxy_url") if self.conf.get("use_proxy") else None,
                 debug_mode=debug_mode,
                 enhancer_model_name=enhancer_model_name,
-                enhancer_preset=enhancer_preset
+                enhancer_preset=enhancer_preset,
+                thinking=bool(params.get("thinking", False))
             )
 
             try:
-                image_data = await self.api_client.generate_content(request_config)
+                gen_result = await self.api_client.generate_content(request_config)
+
+                image_data = gen_result.image
+                thoughts = gen_result.thoughts
 
                 elapsed = (datetime.now() - start_time).total_seconds()
-
                 caption = ResponsePresenter.generation_success(elapsed, self.current_preset_name, enhancer_model_name, enhancer_preset)
-                yield event.chain_result([Image.fromBytes(image_data), Plain(caption)])
+                
+                result_chain = []
+                if thoughts:
+                    result_chain.append(Plain(f"🧐 思考过程:\n{thoughts}\n\n"))
+                
+                result_chain.append(Image.fromBytes(image_data))
+                result_chain.append(Plain(caption))
+
+                yield event.chain_result(result_chain)
 
             except APIError as e:
                 elapsed = (datetime.now() - start_time).total_seconds()
@@ -99,7 +110,7 @@ class GenerationService:
         if additional is True: additional = None
 
         if additional:
-            additional = str(additional) # 强制转为字符串，确保 safe
+            additional = str(additional)
             if user_prompt:
                 user_prompt = user_prompt.strip()
                 if not user_prompt.endswith((",", "，", ".", "。", "!", "！", ";", "；")):
