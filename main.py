@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from astrbot import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
@@ -79,6 +79,36 @@ class Ninjutsu(Star):
     def _kv_adapter(self, parts, text):
         return ConfigSerializer.parse_single_kv(text)
 
+    def _resolve_admin_cmd(self, event: AstrMessageEvent, parts: List[str]) -> Tuple[Optional[str], Optional[int], bool]:
+        at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
+        target_id = str(at_seg.qq) if at_seg else None
+        count_val = None
+        is_group = False
+
+        numbers = [p for p in parts if p.lstrip("-").isdigit()]
+        
+        if at_seg:
+            if numbers: count_val = int(numbers[0])
+            else: pass
+        elif len(numbers) >= 2:
+            target_id = numbers[0]
+            count_val = int(numbers[1])
+        elif len(numbers) == 1:
+            val = int(numbers[0])
+            if event.get_group_id():
+                target_id = event.get_group_id()
+                count_val = val
+                is_group = True
+            else:
+                target_id = str(val) 
+        else:
+            pass
+
+        if not target_id:
+            target_id = event.get_sender_id()
+        
+        return target_id, count_val, is_group
+    
     # --- Event Handlers ---
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=5)
@@ -230,62 +260,29 @@ class Ninjutsu(Star):
 
         # 看板
         if not parts:
-            checkin_res = await self.stats.try_daily_checkin(user_id, self.conf)
-            dashboard_data = self.stats.get_dashboard_data(user_id, group_id)
-            dashboard_data.checkin_result = checkin_res
-            yield event.plain_result(ResponsePresenter.stats_dashboard(dashboard_data, group_id))
+            data = await self.stats.get_dashboard_with_checkin(user_id, group_id, self.conf)
+            yield event.plain_result(ResponsePresenter.stats_dashboard(data, group_id))
             return
 
-        # 管理
+        # 次数
         if is_admin:
-            at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
-            if at_seg:
-                for part in parts:
-                    try:
-                        count = int(part)
-                        target_qq = str(at_seg.qq)
-                        new_val = await self.stats.modify_user_count(target_qq, count)
-                        yield event.plain_result(ResponsePresenter.admin_count_modification(target_qq, count, new_val, is_group=False))
-                        return
-                    except ValueError:
-                        continue
+            target_id, count_val, is_group = self._resolve_admin_cmd(event, parts)
 
-            if len(parts) == 2 and parts[0].isdigit():
-                try:
-                    count = int(parts[1])
-                    target_qq = parts[0]
-                    new_val = await self.stats.modify_user_count(target_qq, count)
-                    yield event.plain_result(ResponsePresenter.admin_count_modification(target_qq, count, new_val, is_group=False))
+            if count_val is not None:
+                if not target_id:
+                    yield event.plain_result("❌ 无法确定修改目标。")
                     return
-                except ValueError:
-                    pass
+                     
+                new_val = await self.stats.modify_resource(target_id, count_val, is_group)
+                yield event.plain_result(ResponsePresenter.admin_count_modification(target_id, count_val, new_val, is_group))
+            else:
+                # 查询
+                u_cnt = self.stats.get_user_count(target_id)
+                g_cnt = self.stats.get_group_count(target_id) if is_group else (self.stats.get_group_count(group_id) if group_id else 0)
 
-            if len(parts) == 1:
-                try:
-                    count = int(parts[0])
-                    if not group_id:
-                        yield event.plain_result("❌ 请在群聊中使用此指令，或使用 #lm <QQ> <次数> 指定对象。")
-                        return
-                    new_val = await self.stats.modify_group_count(group_id, count)
-                    yield event.plain_result(ResponsePresenter.admin_count_modification(group_id, count, new_val, is_group=True))
-                    return
-                except ValueError:
-                    pass
-
-        # 查人
-        if is_admin:
-            target = next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None)
-            if not target and re.search(r"(\d+)", cmd_text):
-                target = re.search(r"(\d+)", cmd_text).group(1)
-
-            query_uid = target if target else user_id
-            u_cnt = self.stats.get_user_count(query_uid)
-            g_cnt = self.stats.get_group_count(group_id) if group_id else 0
-
-            yield event.plain_result(ResponsePresenter.admin_query_result(query_uid, u_cnt, group_id, g_cnt))
-            return
-
-        yield event.plain_result("❌ 无法识别的指令格式或权限不足。")
+                yield event.plain_result(ResponsePresenter.admin_query_result(target_id, u_cnt, group_id, g_cnt))
+        else:
+            yield event.plain_result("❌ 权限不足或指令格式错误。")
 
     @filter.command("lm密钥", alias={"lmk"}, prefix_optional=True)
     async def on_key_management(self, event: AstrMessageEvent):

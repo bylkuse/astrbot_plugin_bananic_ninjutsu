@@ -108,7 +108,7 @@ class StatsManager:
         if bucket:
             bucket.pop()
 
-    # --- 事务上下文 ---
+    # --- 事务 ---
 
     @asynccontextmanager
     async def transaction(self, user_id: str, group_id: Optional[str], config: Dict[str, Any], is_admin: bool = False):
@@ -186,6 +186,8 @@ class StatsManager:
             elif txn.allowed:
                 await self._record_usage_internal(user_id, group_id)
 
+    # --- 数据 ---
+
     def get_user_count(self, user_id: str) -> int:
         return self.user_counts.get(str(user_id), 0)
 
@@ -207,10 +209,32 @@ class StatsManager:
         self.group_counts[gid] = new_val
         await self._save_json(self.group_counts_file, self.group_counts)
         return new_val
-
+    
     # --- 业务 ---
 
-    async def try_daily_checkin(self, user_id: str, config: Dict[str, Any]) -> CheckInResult:
+    async def modify_resource(self, target_id: str, count: int, is_group: bool) -> int:
+        if is_group:
+            return await self.modify_group_count(target_id, count)
+        else:
+            return await self.modify_user_count(target_id, count)
+
+    async def get_dashboard_with_checkin(self, user_id: str, group_id: Optional[str], config: Dict[str, Any]) -> DashboardData:
+        checkin_res = await self._try_daily_checkin(user_id, config)
+        
+        today, users, groups = self._get_leaderboard_data()
+        
+        return DashboardData(
+            user_count=self.get_user_count(user_id),
+            group_count=self.get_group_count(group_id) if group_id else 0,
+            leaderboard_date=today,
+            top_users=users,
+            top_groups=groups,
+            checkin_result=checkin_res
+        )
+
+    # --- 内部 ---
+
+    async def _try_daily_checkin(self, user_id: str, config: Dict[str, Any]) -> CheckInResult:
         if not config.get("enable_checkin", False):
             if config.get("enable_checkin_display", False):
                 return CheckInResult(False, 0, "📅 签到功能未开启。")
@@ -234,23 +258,6 @@ class StatsManager:
         await self.modify_user_count(uid, reward)
         
         return CheckInResult(True, reward, f"🎉 签到成功！获得 {reward} 次。")
-
-    def get_dashboard_data(self, user_id: str, group_id: Optional[str]) -> DashboardData:
-        today, users, groups = self._get_leaderboard_data()
-
-        return DashboardData(
-            user_count=self.get_user_count(user_id),
-            group_count=self.get_group_count(group_id) if group_id else 0,
-            leaderboard_date=today,
-            top_users=users,
-            top_groups=groups,
-            checkin_result=None
-        )
-
-    # --- 辅助方法 ---
-
-    async def record_usage(self, user_id: str, group_id: Optional[str]):
-        await self._record_usage_internal(user_id, group_id)
 
     async def _record_usage_internal(self, user_id: str, group_id: Optional[str]):
         today = datetime.now().strftime("%Y-%m-%d")
