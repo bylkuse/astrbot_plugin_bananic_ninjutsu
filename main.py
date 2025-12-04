@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from astrbot import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
@@ -50,9 +50,6 @@ class Ninjutsu(Star):
         logger.info("香蕉忍法帖 插件已加载")
         if not self.conf.get("api_keys"):
             logger.warning("[香蕉忍法帖]!!! API 密钥未配置!!!")
-
-    def is_global_admin(self, event: AstrMessageEvent) -> bool:
-        return event.get_sender_id() in self.context.get_config().get("admins_id", [])
 
     async def _load_connection_presets(self):
         raw_list = self.conf.get("connection_presets", [])
@@ -113,7 +110,7 @@ class Ninjutsu(Star):
             return
 
         async for res in self.generation_service.run_generation_workflow(
-            event, target_text, params, True, cmd_display, self.context, self.is_global_admin(event)
+            event, target_text, params, True, cmd_display, self.context, self.config_mgr.is_admin(event)
         ):
             yield res
         event.stop_event()
@@ -127,7 +124,7 @@ class Ninjutsu(Star):
         if parsed.first_at: params['first_at'] = parsed.first_at
 
         async for res in self.generation_service.run_generation_workflow(
-            event, parsed.text, params, False, "#lmt", self.context, self.is_global_admin(event)
+            event, parsed.text, params, False, "#lmt", self.context, self.config_mgr.is_admin(event)
         ):
             yield res
         event.stop_event()
@@ -138,19 +135,19 @@ class Ninjutsu(Star):
     async def on_optimizer_management(self, event: AstrMessageEvent):
         async for res in self.config_mgr.handle_crud_command(
             event, ["lm优化", "lmo"], self.pm.get_target_dict("optimizer"), "优化预设", 
-            self.is_global_admin(event), duplicate_check_type="optimizer"
+            duplicate_check_type="optimizer"
         ): yield res
 
     @filter.command("lm预设", alias={"lmp"}, prefix_optional=True)
     async def on_preset_management(self, event: AstrMessageEvent):
         async for res in self.config_mgr.handle_crud_command(
             event, ["lm预设", "lmp"], self.pm.get_target_dict("prompt"), "生图预设", 
-            self.is_global_admin(event), duplicate_check_type="prompt"
+            duplicate_check_type="prompt"
         ): yield res
 
     @filter.command("lm连接", alias={"lmc"}, prefix_optional=True)
     async def on_connection_management(self, event: AstrMessageEvent):
-        is_admin = self.is_global_admin(event)
+        is_admin = self.config_mgr.is_admin(event)
 
         def parse_connection_add(parts: List[str], text: str):
             if not is_admin: return None
@@ -204,7 +201,7 @@ class Ninjutsu(Star):
             return None
 
         async for res in self.config_mgr.handle_crud_command(
-            event, ["lm连接", "lmc"], self.connection_presets, "连接预设", is_admin, 
+            event, ["lm连接", "lmc"], self.connection_presets, "连接预设", 
             after_delete_callback=after_delete, 
             extra_cmd_handler=handle_extras
         ): yield res
@@ -229,36 +226,53 @@ class Ninjutsu(Star):
         parts = cmd_text.split()
         user_id = event.get_sender_id()
         group_id = event.get_group_id()
-        is_admin = self.is_global_admin(event)
+        is_admin = self.config_mgr.is_admin(event)
 
+        # 看板
         if not parts:
             checkin_res = await self.stats.try_daily_checkin(user_id, self.conf)
             dashboard_data = self.stats.get_dashboard_data(user_id, group_id)
             dashboard_data.checkin_result = checkin_res
-
             yield event.plain_result(ResponsePresenter.stats_dashboard(dashboard_data, group_id))
             return
 
-        sub_command = parts[0].lower()
+        # 管理
+        if is_admin:
+            at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
+            if at_seg:
+                for part in parts:
+                    try:
+                        count = int(part)
+                        target_qq = str(at_seg.qq)
+                        new_val = await self.stats.modify_user_count(target_qq, count)
+                        yield event.plain_result(ResponsePresenter.admin_count_modification(target_qq, count, new_val, is_group=False))
+                        return
+                    except ValueError:
+                        continue
 
-        if sub_command == "用户" and is_admin:
-            target_qq, count = self._parse_target_and_count(event, cmd_text, parts)
-            if not target_qq or count <= 0:
-                yield event.plain_result('格式错误:\n#lm次数 用户 @用户 <次数>\n或 #lm次数 用户 <QQ号> <次数>')
-                return
-            new_val = await self.stats.modify_user_count(target_qq, count)
-            yield event.plain_result(ResponsePresenter.admin_count_modification(target_qq, count, new_val, is_group=False))
-            return
+            if len(parts) == 2 and parts[0].isdigit():
+                try:
+                    count = int(parts[1])
+                    target_qq = parts[0]
+                    new_val = await self.stats.modify_user_count(target_qq, count)
+                    yield event.plain_result(ResponsePresenter.admin_count_modification(target_qq, count, new_val, is_group=False))
+                    return
+                except ValueError:
+                    pass
 
-        if sub_command == "群组" and is_admin:
-            if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
-                yield event.plain_result('格式错误: #lm次数 群组 <群号> <次数>')
-                return
-            target_gid, count = parts[1], int(parts[2])
-            new_val = await self.stats.modify_group_count(target_gid, count)
-            yield event.plain_result(ResponsePresenter.admin_count_modification(target_gid, count, new_val, is_group=True))
-            return
+            if len(parts) == 1:
+                try:
+                    count = int(parts[0])
+                    if not group_id:
+                        yield event.plain_result("❌ 请在群聊中使用此指令，或使用 #lm <QQ> <次数> 指定对象。")
+                        return
+                    new_val = await self.stats.modify_group_count(group_id, count)
+                    yield event.plain_result(ResponsePresenter.admin_count_modification(group_id, count, new_val, is_group=True))
+                    return
+                except ValueError:
+                    pass
 
+        # 查人
         if is_admin:
             target = next((str(s.qq) for s in event.message_obj.message if isinstance(s, At)), None)
             if not target and re.search(r"(\d+)", cmd_text):
@@ -267,26 +281,18 @@ class Ninjutsu(Star):
             query_uid = target if target else user_id
             u_cnt = self.stats.get_user_count(query_uid)
             g_cnt = self.stats.get_group_count(group_id) if group_id else 0
-            
+
             yield event.plain_result(ResponsePresenter.admin_query_result(query_uid, u_cnt, group_id, g_cnt))
+            return
 
-    def _parse_target_and_count(self, event, cmd_text, parts):
-        target_qq = None
-        count = 0
-        at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
-        match_num = re.search(r"(\d+)\s*$", cmd_text)
-
-        if at_seg and match_num:
-            target_qq = str(at_seg.qq)
-            count = int(match_num.group(1))
-        elif len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
-            target_qq = parts[1]
-            count = int(parts[2])
-        return target_qq, count
+        yield event.plain_result("❌ 无法识别的指令格式或权限不足。")
 
     @filter.command("lm密钥", alias={"lmk"}, prefix_optional=True)
     async def on_key_management(self, event: AstrMessageEvent):
-        if not self.is_global_admin(event): return
+        if not self.config_mgr.is_admin(event):
+            yield event.plain_result(ResponsePresenter.unauthorized_admin())
+            return
+
         cmd_text = self.config_mgr.strip_command(event.message_str.strip(), ["lm密钥", "lmk"])
         parts = cmd_text.split()
 

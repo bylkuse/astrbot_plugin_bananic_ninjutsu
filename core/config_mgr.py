@@ -15,10 +15,15 @@ class ConfigManager:
     def __init__(self, config_obj: Any, prompt_manager: PromptManager, context: Context):
         self.conf = config_obj
         self.pm = prompt_manager
+        self.context = context
 
         raw_prefixes = context.get_config().get("command_prefixes", ["/"])
         if isinstance(raw_prefixes, str): raw_prefixes = [raw_prefixes]
         self.prefixes = sorted(raw_prefixes, key=len, reverse=True)
+
+    def is_admin(self, event: AstrMessageEvent) -> bool:
+        admins = self.context.get_config().get("admins_id", [])
+        return event.get_sender_id() in admins
 
     async def save_config(self):
         self.pm.sync_to_config()
@@ -82,10 +87,12 @@ class ConfigManager:
         else:
             async for r in perform_save(): yield r
 
-    async def handle_crud_command(self, event: AstrMessageEvent, cmd_list: List[str], target_dict: Dict, item_name: str, is_admin: bool, 
+    async def handle_crud_command(self, event: AstrMessageEvent, cmd_list: List[str], target_dict: Dict, item_name: str, 
                                   after_delete_callback: Optional[Callable[[str], Awaitable[None]]] = None, 
                                   extra_cmd_handler: Optional[Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]] = None, duplicate_check_type: Optional[str] = None):
         """增删改查"""
+        is_admin = self.is_admin(event) 
+
         cmd_text = self.strip_command(event.message_str.strip(), cmd_list)
         parts = cmd_text.split()
 
