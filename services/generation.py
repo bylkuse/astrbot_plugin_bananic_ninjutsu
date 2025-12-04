@@ -95,7 +95,11 @@ class GenerationService:
         user_prompt = prompt_template if prompt_template else raw_text
 
         # 追加prompt
-        if additional := params.get("additional_prompt"):
+        additional = params.get("additional_prompt")
+        if additional is True: additional = None
+
+        if additional:
+            additional = str(additional) # 强制转为字符串，确保 safe
             if user_prompt:
                 user_prompt = user_prompt.strip()
                 if not user_prompt.endswith((",", "，", ".", "。", "!", "！", ";", "；")):
