@@ -9,6 +9,7 @@ from astrbot import logger
 from astrbot.core.message.components import At, Image, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
+
 class ImageUtils:
     _session: Optional[aiohttp.ClientSession] = None
 
@@ -21,7 +22,9 @@ class ImageUtils:
         return cls._session
 
     @classmethod
-    async def download_image(cls, url: str, proxy: Optional[str] = None, timeout: int = 60) -> bytes | None:
+    async def download_image(
+        cls, url: str, proxy: Optional[str] = None, timeout: int = 60
+    ) -> bytes | None:
         logger.debug(f"正在尝试下载图片: {url}")
         try:
             session = await cls.get_session()
@@ -35,13 +38,18 @@ class ImageUtils:
             return None
 
     @classmethod
-    async def get_avatar(cls, user_id: str, proxy: Optional[str] = None) -> bytes | None:
+    async def get_avatar(
+        cls, user_id: str, proxy: Optional[str] = None
+    ) -> bytes | None:
         """获取QQ头像"""
-        if not user_id.isdigit(): return None
+        if not user_id.isdigit():
+            return None
         avatar_url = f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
         return await cls.download_image(avatar_url, proxy=proxy)
 
-    def _process_image_sync(raw: bytes, ensure_white_bg: bool = False, max_size: int = 2048) -> bytes:
+    def _process_image_sync(
+        raw: bytes, ensure_white_bg: bool = False, max_size: int = 2048
+    ) -> bytes:
         PILImage.MAX_IMAGE_PIXELS = 100000000  # 限制大图
         img_io = io.BytesIO(raw)
         try:
@@ -53,21 +61,21 @@ class ImageUtils:
                 if getattr(img, "is_animated", False):
                     img.seek(0)
 
-                if ensure_white_bg or img.mode not in ('RGB', 'RGBA'):
+                if ensure_white_bg or img.mode not in ("RGB", "RGBA"):
                     img = img.convert("RGBA")
 
-                if ensure_white_bg and img.mode == 'RGBA':
-                    bg = PILImage.new('RGB', img.size, (255, 255, 255))
+                if ensure_white_bg and img.mode == "RGBA":
+                    bg = PILImage.new("RGB", img.size, (255, 255, 255))
                     bg.paste(img, (0, 0), img)
                     img = bg
-                elif img.mode == 'RGBA':
-                    pass 
+                elif img.mode == "RGBA":
+                    pass
 
                 out_io = io.BytesIO()
                 if img.mode == "RGB":
-                    img.save(out_io, format="JPEG", quality=85) 
+                    img.save(out_io, format="JPEG", quality=85)
                 else:
-                    img.save(out_io, format="PNG", compress_level=3) 
+                    img.save(out_io, format="PNG", compress_level=3)
 
                 return out_io.getvalue()
         except Exception as e:
@@ -75,7 +83,12 @@ class ImageUtils:
             return raw
 
     @classmethod
-    async def load_and_process(cls, src: Union[str, bytes], proxy: Optional[str] = None, ensure_white_bg: bool = False) -> bytes | None:
+    async def load_and_process(
+        cls,
+        src: Union[str, bytes],
+        proxy: Optional[str] = None,
+        ensure_white_bg: bool = False,
+    ) -> bytes | None:
         raw: bytes | None = None
         loop = asyncio.get_running_loop()
 
@@ -87,16 +100,20 @@ class ImageUtils:
             elif src.startswith("base64://"):
                 try:
                     raw = await loop.run_in_executor(None, base64.b64decode, src[9:])
-                except Exception: pass
+                except Exception:
+                    pass
             elif Path(src).is_file():
                 raw = await loop.run_in_executor(None, Path(src).read_bytes)
 
-        if not raw: return None
+        if not raw:
+            return None
 
         return await asyncio.to_thread(cls._process_image_sync, raw, ensure_white_bg)
 
     @classmethod
-    async def get_images_from_event(cls, event: AstrMessageEvent, max_count: int = 5, proxy: Optional[str] = None) -> List[bytes]:
+    async def get_images_from_event(
+        cls, event: AstrMessageEvent, max_count: int = 5, proxy: Optional[str] = None
+    ) -> List[bytes]:
         """提取图片"""
         img_bytes_list: List[bytes] = []
         at_user_ids: List[str] = []
@@ -107,15 +124,19 @@ class ImageUtils:
                 for s_chain in seg.chain:
                     if isinstance(s_chain, Image):
                         url_or_file = s_chain.url or s_chain.file
-                        if url_or_file and (img := await cls.load_and_process(url_or_file, proxy=proxy)):
+                        if url_or_file and (
+                            img := await cls.load_and_process(url_or_file, proxy=proxy)
+                        ):
                             img_bytes_list.append(img)
-            
+
             # 发送图
             elif isinstance(seg, Image):
                 url_or_file = seg.url or seg.file
-                if url_or_file and (img := await cls.load_and_process(url_or_file, proxy=proxy)):
+                if url_or_file and (
+                    img := await cls.load_and_process(url_or_file, proxy=proxy)
+                ):
                     img_bytes_list.append(img)
-            
+
             # 收集 @
             elif isinstance(seg, At):
                 at_user_ids.append(str(seg.qq))
@@ -124,20 +145,24 @@ class ImageUtils:
         if not img_bytes_list and at_user_ids:
             for user_id in at_user_ids:
                 if avatar := await cls.get_avatar(user_id, proxy=proxy):
-                    processed = await cls.load_and_process(avatar, proxy=proxy) 
-                    if processed: img_bytes_list.append(processed)
-        
+                    processed = await cls.load_and_process(avatar, proxy=proxy)
+                    if processed:
+                        img_bytes_list.append(processed)
+
         # 发送者头像
         if not img_bytes_list:
             sender_id = event.get_sender_id()
             if avatar := await cls.get_avatar(sender_id, proxy=proxy):
                 processed = await cls.load_and_process(avatar, proxy=proxy)
-                if processed: img_bytes_list.append(processed)
+                if processed:
+                    img_bytes_list.append(processed)
 
         return img_bytes_list[:max_count]
 
     @staticmethod
-    async def compress_image(raw_bytes: bytes, quality: int = 85, threshold_mb: float = 1.0) -> bytes:
+    async def compress_image(
+        raw_bytes: bytes, quality: int = 85, threshold_mb: float = 1.0
+    ) -> bytes:
         if not raw_bytes:
             return raw_bytes
 
@@ -146,17 +171,23 @@ class ImageUtils:
 
         # 魔数
         def is_likely_image(data: bytes) -> bool:
-            if len(data) < 12: return False
+            if len(data) < 12:
+                return False
             # JPEG
-            if data.startswith(b'\xff\xd8\xff'): return True
+            if data.startswith(b"\xff\xd8\xff"):
+                return True
             # PNG
-            if data.startswith(b'\x89PNG\r\n\x1a\n'): return True
+            if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                return True
             # GIF
-            if data.startswith(b'GIF8'): return True
+            if data.startswith(b"GIF8"):
+                return True
             # WEBP
-            if data.startswith(b'RIFF') and data[8:12] == b'WEBP': return True
+            if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                return True
             # BMP
-            if data.startswith(b'BM'): return True
+            if data.startswith(b"BM"):
+                return True
             return False
 
         if not is_likely_image(raw_bytes):

@@ -11,15 +11,20 @@ from ..utils.serializer import ConfigSerializer
 from ..utils.views import ResponsePresenter
 from .prompt import PromptManager
 
+
 class ConfigManager:
     """配置项"""
-    def __init__(self, config_obj: Any, prompt_manager: PromptManager, context: Context):
+
+    def __init__(
+        self, config_obj: Any, prompt_manager: PromptManager, context: Context
+    ):
         self.conf = config_obj
         self.pm = prompt_manager
         self.context = context
 
         raw_prefixes = context.get_config().get("command_prefixes", ["/"])
-        if isinstance(raw_prefixes, str): raw_prefixes = [raw_prefixes]
+        if isinstance(raw_prefixes, str):
+            raw_prefixes = [raw_prefixes]
         self.prefixes = sorted(raw_prefixes, key=len, reverse=True)
         self.main_prefix = self.prefixes[0] if self.prefixes else "#"
 
@@ -34,12 +39,16 @@ class ConfigManager:
         except Exception as e:
             raise RuntimeError(f"保存配置失败: {e}")
 
-    async def perform_save_with_confirm(self, event: AstrMessageEvent, 
-                                   target_dict: Dict[str, Any], 
-                                   key: str, 
-                                   new_value: Any, 
-                                   item_name: str):
+    async def perform_save_with_confirm(
+        self,
+        event: AstrMessageEvent,
+        target_dict: Dict[str, Any],
+        key: str,
+        new_value: Any,
+        item_name: str,
+    ):
         """覆盖查验"""
+
         async def perform_save():
             target_dict[key] = new_value
             await self.save_config()
@@ -51,8 +60,16 @@ class ConfigManager:
                 yield event.plain_result(f"💡 {item_name} [{key}] 内容未变更。")
                 return
 
-            old_str = json.dumps(old_value, sort_keys=True, ensure_ascii=False) if isinstance(old_value, (dict, list)) else str(old_value)
-            new_str = json.dumps(new_value, sort_keys=True, ensure_ascii=False) if isinstance(new_value, (dict, list)) else str(new_value)
+            old_str = (
+                json.dumps(old_value, sort_keys=True, ensure_ascii=False)
+                if isinstance(old_value, (dict, list))
+                else str(old_value)
+            )
+            new_str = (
+                json.dumps(new_value, sort_keys=True, ensure_ascii=False)
+                if isinstance(new_value, (dict, list))
+                else str(new_value)
+            )
 
             preview_old = old_str[:100] + "..." if len(old_str) > 100 else old_str
             preview_new = new_str[:100] + "..." if len(new_str) > 100 else new_str
@@ -64,34 +81,49 @@ class ConfigManager:
             )
 
             @session_waiter(timeout=30, record_history_chains=False)
-            async def confirmation_waiter(controller: SessionController, response_event: AstrMessageEvent):
+            async def confirmation_waiter(
+                controller: SessionController, response_event: AstrMessageEvent
+            ):
                 resp = response_event.message_str.strip().lower()
                 if resp in ["是", "yes", "y"]:
-                    async for r in perform_save(): await response_event.send(r)
+                    async for r in perform_save():
+                        await response_event.send(r)
                     controller.stop()
                 elif resp in ["否", "no", "n"]:
-                    await response_event.send(response_event.plain_result("❌ 操作已取消。"))
+                    await response_event.send(
+                        response_event.plain_result("❌ 操作已取消。")
+                    )
                     controller.stop()
+
             try:
                 await confirmation_waiter(event)
             except (asyncio.TimeoutError, TimeoutError):
                 yield event.plain_result("⏰ 操作超时，已自动取消。")
         else:
-            async for r in perform_save(): yield r
+            async for r in perform_save():
+                yield r
 
-    async def handle_crud_command(self, 
-                                  event: AstrMessageEvent, 
-                                  cmd_list: List[str], 
-                                  target_dict: Dict, 
-                                  item_name: str, 
-                                  after_delete_callback: Optional[Callable[[str], Awaitable[None]]] = None, 
-                                  extra_cmd_handler: Optional[Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]] = None, 
-                                  duplicate_check_type: Optional[str] = None,
-                                  custom_update_handler: Optional[Callable[[AstrMessageEvent, str, List[str]], Awaitable[bool]]] = None,
-                                  custom_display_handler: Optional[Callable[[str, Any], str]] = None):
+    async def handle_crud_command(
+        self,
+        event: AstrMessageEvent,
+        cmd_list: List[str],
+        target_dict: Dict,
+        item_name: str,
+        after_delete_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+        extra_cmd_handler: Optional[
+            Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]
+        ] = None,
+        duplicate_check_type: Optional[str] = None,
+        custom_update_handler: Optional[
+            Callable[[AstrMessageEvent, str, List[str]], Awaitable[bool]]
+        ] = None,
+        custom_display_handler: Optional[Callable[[str, Any], str]] = None,
+    ):
         """增删改查"""
         is_admin = self.is_admin(event)
-        parsed = CommandParser.parse(event, cmd_aliases=cmd_list, prefixes=self.prefixes)
+        parsed = CommandParser.parse(
+            event, cmd_aliases=cmd_list, prefixes=self.prefixes
+        )
         cmd_text = parsed.text.strip()
         parts = cmd_text.split()
         cmd_display_name = f"{self.main_prefix}{cmd_list[0]}"
@@ -120,9 +152,16 @@ class ConfigManager:
             for name in sorted(target_dict.keys()):
                 content = target_dict[name]
                 content_str = str(content)
-                preview = content_str[:30] + "..." if len(content_str) > 30 else content_str
+                preview = (
+                    content_str[:30] + "..." if len(content_str) > 30 else content_str
+                )
                 msg_lines.append(f"▪️ [{name}]: {preview}")
-            msg_lines.append("\n" + ResponsePresenter.presets_common(item_name, cmd_display_name, is_admin))
+            msg_lines.append(
+                "\n"
+                + ResponsePresenter.presets_common(
+                    item_name, cmd_display_name, is_admin
+                )
+            )
             yield event.plain_result("\n".join(msg_lines))
             return
 
@@ -136,14 +175,17 @@ class ConfigManager:
 
             key = parts[1]
             if key not in target_dict:
-                yield event.plain_result(ResponsePresenter.item_not_found(item_name, key))
+                yield event.plain_result(
+                    ResponsePresenter.item_not_found(item_name, key)
+                )
                 return
             if item_name == "优化预设" and key == "default":
                 yield event.plain_result("❌ default 预设不可删除。")
                 return
 
             del target_dict[key]
-            if after_delete_callback: await after_delete_callback(key)
+            if after_delete_callback:
+                await after_delete_callback(key)
             await self.save_config()
             yield event.plain_result(f"✅ 已删除 {item_name} [{key}]。")
             return
@@ -153,14 +195,20 @@ class ConfigManager:
                 yield event.plain_result(ResponsePresenter.unauthorized_admin())
                 return
             if len(parts) < 3:
-                yield event.plain_result(f"格式错误: {cmd_display_name} ren <旧名> <新名>")
+                yield event.plain_result(
+                    f"格式错误: {cmd_display_name} ren <旧名> <新名>"
+                )
                 return
             old_k, new_k = parts[1], parts[2]
             if old_k not in target_dict:
-                yield event.plain_result(ResponsePresenter.item_not_found(item_name, old_k))
+                yield event.plain_result(
+                    ResponsePresenter.item_not_found(item_name, old_k)
+                )
                 return
             if new_k in target_dict:
-                yield event.plain_result(ResponsePresenter.duplicate_item(item_name, new_k))
+                yield event.plain_result(
+                    ResponsePresenter.duplicate_item(item_name, new_k)
+                )
                 return
             if item_name == "优化预设" and old_k == "default":
                 yield event.plain_result("❌ default 预设不可重命名。")
@@ -178,12 +226,14 @@ class ConfigManager:
                 if custom_display_handler:
                     msg = custom_display_handler(target_key, content)
                 else:
-                    msg = ResponsePresenter.format_preset_detail(item_name, target_key, content)
+                    msg = ResponsePresenter.format_preset_detail(
+                        item_name, target_key, content
+                    )
                 yield event.plain_result(msg)
                 return
             if custom_update_handler:
                 if await custom_update_handler(event, target_key, parts[1:]):
-                    return 
+                    return
 
         # 增改
         if parsed := ConfigSerializer.parse_single_kv(cmd_text):
@@ -192,11 +242,18 @@ class ConfigManager:
             if duplicate_check_type and isinstance(add_value, str):
                 dup_key = self.pm.check_duplicate(duplicate_check_type, add_value)
                 if dup_key and dup_key != add_key:
-                    yield event.plain_result(ResponsePresenter.duplicate_item("内容于", dup_key) + " 无需重复添加。")
+                    yield event.plain_result(
+                        ResponsePresenter.duplicate_item("内容于", dup_key)
+                        + " 无需重复添加。"
+                    )
                     return
 
-            async for res in self.perform_save_with_confirm(event, target_dict, add_key, add_value, item_name):
+            async for res in self.perform_save_with_confirm(
+                event, target_dict, add_key, add_value, item_name
+            ):
                 yield res
             return
 
-        yield event.plain_result(ResponsePresenter.item_not_found(item_name, target_key))
+        yield event.plain_result(
+            ResponsePresenter.item_not_found(item_name, target_key)
+        )

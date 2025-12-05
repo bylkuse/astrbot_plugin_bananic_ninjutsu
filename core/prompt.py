@@ -8,10 +8,13 @@ from typing import Any, Dict, List, Optional, Tuple, Literal
 
 from astrbot import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
 from astrbot.core.message.components import At
 
 from ..utils.serializer import ConfigSerializer
+
 
 class PromptManager:
     def __init__(self, config: dict, data_dir: Path):
@@ -23,13 +26,29 @@ class PromptManager:
 
         self.prompt_map: Dict[str, str] = {}
         self.optimizer_presets: Dict[str, str] = {}
-        self.color_list = ["red", "blue", "green", "yellow", "purple", "orange", "black", "white", "pink", "cyan"]
+        self.color_list = [
+            "red",
+            "blue",
+            "green",
+            "yellow",
+            "purple",
+            "orange",
+            "black",
+            "white",
+            "pink",
+            "cyan",
+        ]
 
     def sync_to_config(self):
-        if "Generation_Config" not in self.config: self.config["Generation_Config"] = {}
-        
-        self.config["Generation_Config"]["prompt_list"] = ConfigSerializer.dump_kv_list(self.prompt_map)
-        self.config["Generation_Config"]["optimizer_presets"] = ConfigSerializer.dump_kv_list(self.optimizer_presets)
+        if "Generation_Config" not in self.config:
+            self.config["Generation_Config"] = {}
+
+        self.config["Generation_Config"]["prompt_list"] = ConfigSerializer.dump_kv_list(
+            self.prompt_map
+        )
+        self.config["Generation_Config"]["optimizer_presets"] = (
+            ConfigSerializer.dump_kv_list(self.optimizer_presets)
+        )
 
     async def load_prompts(self):
         gen_conf = self.config.get("Generation_Config", {})
@@ -41,9 +60,13 @@ class PromptManager:
         self.optimizer_presets = ConfigSerializer.load_kv_list(raw_opt_list)
 
         if "default" not in self.optimizer_presets:
-            self.optimizer_presets["default"] = "You are a professional prompt engineer. Rewrite the user's description into a detailed prompt."
+            self.optimizer_presets["default"] = (
+                "You are a professional prompt engineer. Rewrite the user's description into a detailed prompt."
+            )
 
-        logger.info(f"PromptManager: 已加载 {len(self.prompt_map)} 个生图预设, {len(self.optimizer_presets)} 个优化预设")
+        logger.info(
+            f"PromptManager: 已加载 {len(self.prompt_map)} 个生图预设, {len(self.optimizer_presets)} 个优化预设"
+        )
 
     def get_preset(self, key: str) -> Optional[str]:
         return self.prompt_map.get(key)
@@ -54,12 +77,14 @@ class PromptManager:
     def normalize_for_comparison(self, text: str) -> str:
         symbols_to_strip = string.punctuation + "，。！？；：”’（）《》【】"
 
-        if '%' in text:
-            text = re.sub(r'%p(\d*)?(?::([^%]*))?%', lambda m: m.group(2) or '', text)
+        if "%" in text:
+            text = re.sub(r"%p(\d*)?(?::([^%]*))?%", lambda m: m.group(2) or "", text)
 
         return text.rstrip(symbols_to_strip)
 
-    def check_duplicate(self, p_type: Literal["prompt", "optimizer"], new_value: str) -> Optional[str]:
+    def check_duplicate(
+        self, p_type: Literal["prompt", "optimizer"], new_value: str
+    ) -> Optional[str]:
         target_dict = self.get_target_dict(p_type)
         new_val_norm = self.normalize_for_comparison(new_value)
 
@@ -68,65 +93,83 @@ class PromptManager:
                 return key
         return None
 
-    async def process_variables(self, prompt: str, params: dict, event: Optional[AstrMessageEvent] = None) -> str:
-        if not prompt or '%' not in prompt: return prompt
+    async def process_variables(
+        self, prompt: str, params: dict, event: Optional[AstrMessageEvent] = None
+    ) -> str:
+        if not prompt or "%" not in prompt:
+            return prompt
 
         target_user_id = event.get_sender_id() if event else None
-        q_param = params.get('q')
+        q_param = params.get("q")
         if q_param:
-            if isinstance(q_param, str) and q_param.isdigit(): target_user_id = q_param
-            elif isinstance(q_param, At): target_user_id = str(q_param.qq)
+            if isinstance(q_param, str) and q_param.isdigit():
+                target_user_id = q_param
+            elif isinstance(q_param, At):
+                target_user_id = str(q_param.qq)
             elif q_param is True and event:
-                first_at = params.get('first_at') or next((s for s in event.message_obj.message if isinstance(s, At)), None)
-                if first_at: target_user_id = str(first_at.qq)
+                first_at = params.get("first_at") or next(
+                    (s for s in event.message_obj.message if isinstance(s, At)), None
+                )
+                if first_at:
+                    target_user_id = str(first_at.qq)
 
         user_age, user_birthday = "", ""
-        if event and target_user_id and ('%age%' in prompt or '%bd%' in prompt):
+        if event and target_user_id and ("%age%" in prompt or "%bd%" in prompt):
             try:
-                info = await event.bot.get_stranger_info(user_id=int(target_user_id), no_cache=True)
-                user_age = str(info.get('age', ''))
-                if (m := info.get('birthday_month')) and (d := info.get('birthday_day')):
+                info = await event.bot.get_stranger_info(
+                    user_id=int(target_user_id), no_cache=True
+                )
+                user_age = str(info.get("age", ""))
+                if (m := info.get("birthday_month")) and (
+                    d := info.get("birthday_day")
+                ):
                     user_birthday = f"{m}月{d}日"
-                elif y := info.get('birthday_year'):
+                elif y := info.get("birthday_year"):
                     user_birthday = f"{y}年"
-            except Exception: pass
+            except Exception:
+                pass
 
         if event:
             ctx_map = {
-                '%g%': lambda: self.get_group_name(event),
-                '%un%': lambda: self.get_user_nickname(event, target_user_id),
-                '%run%': lambda: self.get_random_member_nickname(event),
-                '%uid%': lambda: target_user_id
+                "%g%": lambda: self.get_group_name(event),
+                "%un%": lambda: self.get_user_nickname(event, target_user_id),
+                "%run%": lambda: self.get_random_member_nickname(event),
+                "%uid%": lambda: target_user_id,
             }
 
             for k, func in ctx_map.items():
                 if k in prompt:
                     res = func()
-                    if asyncio.iscoroutine(res): res = await res
+                    if asyncio.iscoroutine(res):
+                        res = await res
                     prompt = prompt.replace(k, str(res))
 
         func_map = {
-            'r': lambda v: random.choice(v.split('|')) if v else '',
-            'rn': lambda v: str(random.randint(*map(int, v.split('-')))),
-            'rl': lambda v: ''.join(random.choices(string.ascii_letters, k=int(v))),
+            "r": lambda v: random.choice(v.split("|")) if v else "",
+            "rn": lambda v: str(random.randint(*map(int, v.split("-")))),
+            "rl": lambda v: "".join(random.choices(string.ascii_letters, k=int(v))),
         }
 
         val_map = {
-            'rc': lambda: random.choice(self.color_list),
-            't': lambda: datetime.now().strftime("%H:%M:%S"),
-            'd': lambda: datetime.now().strftime("%m月%d日"),
-            'age': lambda: user_age,
-            'bd': lambda: user_birthday,
-            'wd': lambda: f"星期{'日一二三四五六'[int(datetime.now().strftime('%w'))]}"
+            "rc": lambda: random.choice(self.color_list),
+            "t": lambda: datetime.now().strftime("%H:%M:%S"),
+            "d": lambda: datetime.now().strftime("%m月%d日"),
+            "age": lambda: user_age,
+            "bd": lambda: user_birthday,
+            "wd": lambda: f"星期{'日一二三四五六'[int(datetime.now().strftime('%w'))]}",
         }
 
         escaped = "___ESCAPED___"
         for _ in range(5):
-            if '%' not in prompt: break
+            if "%" not in prompt:
+                break
             prompt = prompt.replace("%%", escaped)
 
-            prompt = re.sub(r'%p(\d*)?(?::([^%]*))?%', 
-                          lambda m: str(params.get(f'p{m.group(1) or ""}', m.group(2) or '')), prompt)
+            prompt = re.sub(
+                r"%p(\d*)?(?::([^%]*))?%",
+                lambda m: str(params.get(f"p{m.group(1) or ''}", m.group(2) or "")),
+                prompt,
+            )
 
             def replacer(m):
                 raw = m.group(1)
@@ -135,9 +178,10 @@ class PromptManager:
                         k, v = kv
                         return str(func_map[k](v)) if k in func_map else m.group(0)
                     return str(val_map[raw]()) if raw in val_map else m.group(0)
-                except Exception: return m.group(0)
+                except Exception:
+                    return m.group(0)
 
-            prompt = re.sub(r'%([a-zA-Z0-9_:|]+?)%', replacer, prompt)
+            prompt = re.sub(r"%([a-zA-Z0-9_:|]+?)%", replacer, prompt)
 
         return prompt.replace(escaped, "%")
 
@@ -171,13 +215,29 @@ class PromptManager:
             group_id = event.get_group_id()
             member_list = await event.bot.get_group_member_list(group_id=int(group_id))
             if not member_list:
-                return await self.get_user_nickname(event, event.get_self_id()) or fallback_name
+                return (
+                    await self.get_user_nickname(event, event.get_self_id())
+                    or fallback_name
+                )
             random_member = random.choice(member_list)
-            return random_member.get("card") or random_member.get("nickname") or fallback_name
+            return (
+                random_member.get("card")
+                or random_member.get("nickname")
+                or fallback_name
+            )
         except Exception as e:
-            return await self.get_user_nickname(event, event.get_self_id()) or fallback_name
+            return (
+                await self.get_user_nickname(event, event.get_self_id())
+                or fallback_name
+            )
 
-    async def enhance_prompt(self, context: Any, original_prompt: str, event: AstrMessageEvent, up_value: Any = "default") -> Tuple[str, Optional[str]]:
+    async def enhance_prompt(
+        self,
+        context: Any,
+        original_prompt: str,
+        event: AstrMessageEvent,
+        up_value: Any = "default",
+    ) -> Tuple[str, Optional[str]]:
         instruction_key = str(up_value) if up_value is not True else "default"
         used_preset_name = None
 
@@ -226,7 +286,7 @@ class PromptManager:
                 prompt=full_prompt,
                 context=[],
                 system_prompt=system_instruction,
-                model=gen_conf.get("prompt_enhanced_model")
+                model=gen_conf.get("prompt_enhanced_model"),
             )
 
             enhancer_model_name = getattr(resp.raw_completion, "model_version", None)
@@ -241,13 +301,16 @@ class PromptManager:
                 content = str(resp)
 
             content = content.strip()
-            if content.startswith("LLMResponse("): content = ""
+            if content.startswith("LLMResponse("):
+                content = ""
 
             if not content or "error" in content.lower():
                 logger.warning(f"提示词优化失败: LLM 返回无效内容: {content}")
                 return original_prompt, None, None
 
-            logger.info(f"提示词优化 [{used_preset_name}]: {original_prompt} -> {content}")
+            logger.info(
+                f"提示词优化 [{used_preset_name}]: {original_prompt} -> {content}"
+            )
             return content, enhancer_model_name, used_preset_name
         except Exception as e:
             logger.error(f"调用 LLM 进行提示词优化时出错: {e}", exc_info=True)

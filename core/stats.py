@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("astrbot")
 
+
 @dataclass
 class PermissionTransaction:
     allowed: bool = False
@@ -25,11 +26,13 @@ class PermissionTransaction:
         self._is_failed = True
         self._fail_reason = reason
 
+
 @dataclass
 class CheckInResult:
     success: bool
     reward: int = 0
     message: str = ""
+
 
 @dataclass
 class DashboardData:
@@ -39,6 +42,7 @@ class DashboardData:
     top_users: List[Tuple[str, int]]
     top_groups: List[Tuple[str, int]]
     checkin_result: Optional[CheckInResult] = None
+
 
 class StatsManager:
     def __init__(self, data_dir: Path):
@@ -66,10 +70,14 @@ class StatsManager:
         self.user_counts = await self._load_json(self.user_counts_file, {})
         self.group_counts = await self._load_json(self.group_counts_file, {})
         self.user_checkin_data = await self._load_json(self.user_checkin_file, {})
-        self.daily_stats = await self._load_json(self.daily_stats_file, {"date": "", "users": {}, "groups": {}})
-        logger.info(f"StatsManager: 数据加载完成。当前记录日期: {self.daily_stats.get('date', '无')}")
+        self.daily_stats = await self._load_json(
+            self.daily_stats_file, {"date": "", "users": {}, "groups": {}}
+        )
+        logger.info(
+            f"StatsManager: 数据加载完成。当前记录日期: {self.daily_stats.get('date', '无')}"
+        )
 
-        self.start_auto_save() # 缓存回写
+        self.start_auto_save()  # 缓存回写
 
     def start_auto_save(self):
         if self._auto_save_task is None or self._auto_save_task.done():
@@ -126,7 +134,8 @@ class StatsManager:
             logger.error(f"数据回写失败: {e}")
 
     async def _load_json(self, file_path: Path, default: Any) -> Any:
-        if not file_path.exists(): return default
+        if not file_path.exists():
+            return default
         try:
             content = await asyncio.to_thread(file_path.read_text, "utf-8")
             return json.loads(content)
@@ -177,7 +186,13 @@ class StatsManager:
     # --- 事务 ---
 
     @asynccontextmanager
-    async def transaction(self, user_id: str, group_id: Optional[str], config: Dict[str, Any], is_admin: bool = False):
+    async def transaction(
+        self,
+        user_id: str,
+        group_id: Optional[str],
+        config: Dict[str, Any],
+        is_admin: bool = False,
+    ):
         txn = PermissionTransaction()
         perm_conf = config.get("Permission_Config", {})
 
@@ -187,16 +202,34 @@ class StatsManager:
             return
 
         if user_id in perm_conf.get("user_blacklist", []):
-            txn.allowed = False; txn.reject_reason = "❌ 您已被加入黑名单。"; yield txn; return
+            txn.allowed = False
+            txn.reject_reason = "❌ 您已被加入黑名单。"
+            yield txn
+            return
 
         if group_id and group_id in perm_conf.get("group_blacklist", []):
-            txn.allowed = False; txn.reject_reason = "❌ 本群已被加入黑名单。"; yield txn; return
+            txn.allowed = False
+            txn.reject_reason = "❌ 本群已被加入黑名单。"
+            yield txn
+            return
 
-        if perm_conf.get("user_whitelist") and user_id not in perm_conf.get("user_whitelist"):
-            txn.allowed = False; txn.reject_reason = "❌ 您不在白名单中。"; yield txn; return
+        if perm_conf.get("user_whitelist") and user_id not in perm_conf.get(
+            "user_whitelist"
+        ):
+            txn.allowed = False
+            txn.reject_reason = "❌ 您不在白名单中。"
+            yield txn
+            return
 
-        if group_id and perm_conf.get("group_whitelist") and group_id not in perm_conf.get("group_whitelist"):
-            txn.allowed = False; txn.reject_reason = "❌ 本群不在白名单中。"; yield txn; return
+        if (
+            group_id
+            and perm_conf.get("group_whitelist")
+            and group_id not in perm_conf.get("group_whitelist")
+        ):
+            txn.allowed = False
+            txn.reject_reason = "❌ 本群不在白名单中。"
+            yield txn
+            return
 
         if group_id and not await self._check_rate_limit(group_id, config):
             txn.allowed = False
@@ -281,23 +314,27 @@ class StatsManager:
         else:
             return await self.modify_user_count(target_id, count)
 
-    async def get_dashboard_with_checkin(self, user_id: str, group_id: Optional[str], config: Dict[str, Any]) -> DashboardData:
+    async def get_dashboard_with_checkin(
+        self, user_id: str, group_id: Optional[str], config: Dict[str, Any]
+    ) -> DashboardData:
         checkin_res = await self._try_daily_checkin(user_id, config)
-        
+
         today, users, groups = self._get_leaderboard_data()
-        
+
         return DashboardData(
             user_count=self.get_user_count(user_id),
             group_count=self.get_group_count(group_id) if group_id else 0,
             leaderboard_date=today,
             top_users=users,
             top_groups=groups,
-            checkin_result=checkin_res
+            checkin_result=checkin_res,
         )
 
     # --- 内部 ---
 
-    async def _try_daily_checkin(self, user_id: str, config: Dict[str, Any]) -> CheckInResult:
+    async def _try_daily_checkin(
+        self, user_id: str, config: Dict[str, Any]
+    ) -> CheckInResult:
         checkin_conf = config.get("Checkin_Config", {})
 
         if not checkin_conf.get("enable_checkin", False):
@@ -309,7 +346,9 @@ class StatsManager:
         if self.user_checkin_data.get(uid) == today:
             return CheckInResult(False, 0, "📅 您今天已经签到过了。")
 
-        is_random = str(checkin_conf.get("enable_random_checkin", False)).lower() == 'true'
+        is_random = (
+            str(checkin_conf.get("enable_random_checkin", False)).lower() == "true"
+        )
         if is_random:
             base_max = int(checkin_conf.get("checkin_random_reward_max", 5))
             reward = random.randint(1, max(1, base_max))
@@ -319,7 +358,7 @@ class StatsManager:
         self.user_checkin_data[uid] = today
         self._dirty_flags.add("checkin")
         await self.modify_user_count(uid, reward)
-        
+
         return CheckInResult(True, reward, f"🎉 签到成功！获得 {reward} 次。")
 
     async def _record_usage_internal(self, user_id: str, group_id: Optional[str]):
@@ -336,11 +375,17 @@ class StatsManager:
 
         self._dirty_flags.add("daily")
 
-    def _get_leaderboard_data(self) -> Tuple[str, List[Tuple[str, int]], List[Tuple[str, int]]]:
+    def _get_leaderboard_data(
+        self,
+    ) -> Tuple[str, List[Tuple[str, int]], List[Tuple[str, int]]]:
         today = datetime.now().strftime("%Y-%m-%d")
         if self.daily_stats.get("date") != today:
             return today, [], []
 
-        users_sorted = sorted(self.daily_stats.get("users", {}).items(), key=lambda x: x[1], reverse=True)[:10]
-        groups_sorted = sorted(self.daily_stats.get("groups", {}).items(), key=lambda x: x[1], reverse=True)[:10]
+        users_sorted = sorted(
+            self.daily_stats.get("users", {}).items(), key=lambda x: x[1], reverse=True
+        )[:10]
+        groups_sorted = sorted(
+            self.daily_stats.get("groups", {}).items(), key=lambda x: x[1], reverse=True
+        )[:10]
         return today, users_sorted, groups_sorted
