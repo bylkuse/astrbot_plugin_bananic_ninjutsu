@@ -276,9 +276,6 @@ class Ninjutsu(Star):
         parsed = CommandParser.parse(
             event, cmd_aliases=[cmd_pure], prefixes=self.global_prefixes
         )
-        params = parsed.params
-        if parsed.first_at:
-            params["first_at"] = parsed.first_at
 
         target_text = ""
         cmd_display = ""
@@ -294,10 +291,13 @@ class Ninjutsu(Star):
         else:
             return
 
+        if not target_text:
+            return
+
         async for res in self.generation_service.run_generation_workflow(
             event,
             target_text,
-            params,
+            parsed,
             True,
             cmd_display,
             self.context,
@@ -318,16 +318,14 @@ class Ninjutsu(Star):
             cmd_aliases=[first_token] if first_token else [],
             prefixes=self.global_prefixes,
         )
-        params = parsed.params
-        if parsed.first_at:
-            params["first_at"] = parsed.first_at
+
         cmd_name = first_token if first_token else "lmt"
         cmd_display = f"{self.main_prefix}{cmd_name}"
 
         async for res in self.generation_service.run_generation_workflow(
             event,
             parsed.text,
-            params,
+            parsed,
             False,
             cmd_display,
             self.context,

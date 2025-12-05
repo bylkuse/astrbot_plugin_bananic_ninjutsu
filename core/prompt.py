@@ -11,6 +11,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.message.components import At
 
 from ..utils.serializer import ConfigSerializer
+from ..utils.parser import ParsedCommand
 
 
 class PromptManager:
@@ -88,7 +89,12 @@ class PromptManager:
                 return key
         return None
 
-    async def process_variables(self, prompt: str, params: dict, event: AstrMessageEvent | None = None) -> str:
+    async def process_variables(
+        self, 
+        prompt: str, 
+        parsed_command: ParsedCommand,  # 替换 params: dict
+        event: AstrMessageEvent | None = None
+    ) -> str:
         # 防ReDoS
         if len(prompt) > 4096:
             return prompt
@@ -96,8 +102,12 @@ class PromptManager:
         if not prompt or "%" not in prompt:
             return prompt
 
+        params = parsed_command.params
+
         target_user_id = event.get_sender_id() if event else None
+
         q_param = params.get("q")
+
         if q_param:
             if isinstance(q_param, str):
                 clean_q = q_param.replace("@", "").strip()
@@ -105,12 +115,11 @@ class PromptManager:
                     target_user_id = clean_q
             elif isinstance(q_param, At):
                 target_user_id = str(q_param.qq)
-            elif q_param is True and event:
-                first_at = params.get("first_at") or next(
-                    (s for s in event.message_obj.message if isinstance(s, At)), None
-                )
-                if first_at:
-                    target_user_id = str(first_at.qq)
+            elif q_param is True:
+                if parsed_command.first_at:
+                    target_user_id = str(parsed_command.first_at.qq)
+        elif parsed_command.first_at:
+            pass
 
         user_age, user_birthday = "", ""
         if event and target_user_id and ("%age%" in prompt or "%bd%" in prompt):

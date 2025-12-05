@@ -9,6 +9,7 @@ from ..core.stats import StatsManager
 from ..core.prompt import PromptManager
 from ..core.images import ImageUtils
 from ..utils.views import ResponsePresenter
+from ..utils.parser import ParsedCommand
 
 
 class GenerationService:
@@ -136,17 +137,18 @@ class GenerationService:
     async def run_generation_workflow(
         self,
         event: AstrMessageEvent,
-        raw_text: str,
-        params: dict,
+        target_text: str,
+        parsed_command: ParsedCommand,
         require_image: bool,
         cmd_display_name: str,
         context: Any,
         is_master: bool,
     ):
         """公用生图逻辑"""
+        params = parsed_command.params
         # 预设解析
-        prompt_template = self.pm.get_preset(raw_text)
-        user_prompt = prompt_template if prompt_template else raw_text
+        prompt_template = self.pm.get_preset(target_text)
+        user_prompt = prompt_template if prompt_template else target_text
 
         # 追加prompt
         additional = params.get("additional_prompt")
@@ -174,7 +176,7 @@ class GenerationService:
             return
 
         # 变量处理
-        prompt = await self.pm.process_variables(user_prompt, params, event)
+        prompt = await self.pm.process_variables(user_prompt, parsed_command, event)
 
         # 提示词优化
         enhancer_model_name = None
