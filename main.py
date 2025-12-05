@@ -168,6 +168,7 @@ class Ninjutsu(Star):
 
     @filter.command("文生图", alias={"lmt"}, prefix_optional=True)
     async def on_text_to_image_request(self, event: AstrMessageEvent):
+        """预设/自定义文生图"""
         first_token = CommandParser.extract_pure_command(
             event.message_str, self.global_prefixes
         )
@@ -198,6 +199,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm优化", alias={"lmo"}, prefix_optional=True)
     async def on_optimizer_management(self, event: AstrMessageEvent):
+        """管理优化预设"""
         async for res in self.config_mgr.handle_crud_command(
             event,
             ["lm优化", "lmo"],
@@ -209,6 +211,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm预设", alias={"lmp"}, prefix_optional=True)
     async def on_preset_management(self, event: AstrMessageEvent):
+        """管理生图预设"""
         async for res in self.config_mgr.handle_crud_command(
             event,
             ["lm预设", "lmp"],
@@ -220,6 +223,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm连接", alias={"lmc"}, prefix_optional=True)
     async def on_connection_management(self, event: AstrMessageEvent):
+        """管理连接预设"""
         is_admin = self.config_mgr.is_admin(event)
 
         async def handle_extras(evt, parts):
@@ -364,6 +368,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm帮助", alias={"lmh"}, prefix_optional=True)
     async def on_prompt_help(self, event: AstrMessageEvent):
+        """使用帮助"""
         parsed = CommandParser.parse(
             event, cmd_aliases=["lm帮助", "lmh"], prefixes=self.global_prefixes
         )
@@ -385,6 +390,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm次数", alias={"lm"}, prefix_optional=True)
     async def on_counts_management(self, event: AstrMessageEvent):
+        """签到看板&管理次数"""
         parsed = CommandParser.parse(
             event, cmd_aliases=["lm次数", "lm"], prefixes=self.global_prefixes
         )
@@ -437,6 +443,7 @@ class Ninjutsu(Star):
 
     @filter.command("lm密钥", alias={"lmk"}, prefix_optional=True)
     async def on_key_management(self, event: AstrMessageEvent):
+        """独立&快捷的密钥管理"""
         if not self.config_mgr.is_admin(event):
             yield event.plain_result(ResponsePresenter.unauthorized_admin())
             return
