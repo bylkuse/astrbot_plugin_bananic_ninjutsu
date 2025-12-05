@@ -1,6 +1,8 @@
+import os
 import json
+from pathlib import Path
 from typing import Dict, List, Any, Optional
-
+from astrbot.api import logger
 
 class ConfigSerializer:
     """序列化，兼容性妥协"""
@@ -50,3 +52,38 @@ class ConfigSerializer:
     @staticmethod
     def dump_json_list(data_map: Dict[str, Dict[str, Any]]) -> List[str]:
         return [json.dumps(data, ensure_ascii=False) for data in data_map.values()]
+
+    @staticmethod
+    def serialize_any(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, sort_keys=True, ensure_ascii=False)
+        return str(value)
+
+    @staticmethod
+    def serialize_pretty(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, indent=2, ensure_ascii=False)
+        return str(value)
+
+    @staticmethod
+    def load_json_from_file(file_path: Path, default: Any = None) -> Any:
+        if not file_path.exists():
+            return default
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            return json.loads(content)
+        except Exception as e:
+            logger.error(f"ConfigSerializer 加载 {file_path} 失败: {e}")
+            return default
+
+    @staticmethod
+    def save_json_to_file(file_path: Path, data: Any):
+        try:
+            content = json.dumps(data, ensure_ascii=False, indent=4)
+
+            # 原子写入
+            temp_path = file_path.with_suffix(".tmp")
+            temp_path.write_text(content, encoding="utf-8")
+            os.replace(temp_path, file_path)
+        except Exception as e:
+            logger.error(f"ConfigSerializer 保存 {file_path} 失败: {e}")

@@ -1,7 +1,8 @@
+from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple
 from astrbot.api import logger
 from astrbot.api.event import filter
-from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
 from astrbot.core.message.components import At
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -16,6 +17,18 @@ from .utils.serializer import ConfigSerializer
 from .utils.parser import CommandParser, ParsedCommand
 from .utils.views import ResponsePresenter
 
+def require_service(func):
+    @wraps(func)
+    async def wrapper(self, event: AstrMessageEvent, *args, **kwargs):
+        if not self.generation_service:
+            logger.error(f"调用 {func.__name__} 失败: 服务未初始化")
+            yield event.plain_result("❌ 服务正在初始化或初始化失败，请稍后重试。")
+            return
+
+        async for item in func(self, event, *args, **kwargs):
+            yield item
+
+    return wrapper
 
 class Ninjutsu(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -34,6 +47,12 @@ class Ninjutsu(Star):
         self.stats = StatsManager(self.plugin_data_dir)
         self.config_mgr = ConfigManager(self.conf, self.pm, self.context)
 
+        self.connection_presets: Dict[str, Any] = {}
+        self.generation_service: Optional[GenerationService] = None
+
+    async def initialize(self):
+        await self.stats.load_all_data()
+        await self.pm.load_prompts()
         conn_conf = self.conf.get("Connection_Config", {})
 
         raw_list = conn_conf.get("connection_presets")
@@ -41,7 +60,6 @@ class Ninjutsu(Star):
             raw_list, key_field="name"
         )
         current_preset_name = conn_conf.get("current_preset_name")
-
         active_preset_data = self.connection_presets.get(current_preset_name)
         if not active_preset_data:
             if self.connection_presets:
@@ -65,17 +83,18 @@ class Ninjutsu(Star):
             main_prefix=self.main_prefix,
         )
 
-    async def initialize(self):
-        await self.stats.load_all_data()
-        await self.pm.load_prompts()
         logger.info("香蕉忍法帖 插件已加载")
 
     async def _save_connections(self):
         if "Connection_Config" not in self.conf:
             self.conf["Connection_Config"] = {}
-        self.conf["Connection_Config"]["connection_presets"] = (
-            ConfigSerializer.dump_json_list(self.connection_presets)
+
+        serialized_data = await asyncio.to_thread(
+            ConfigSerializer.dump_json_list, 
+            self.connection_presets
         )
+        self.conf["Connection_Config"]["connection_presets"] = serialized_data
+
         await self.config_mgr.save_config()
 
     def _resolve_admin_cmd(
@@ -109,9 +128,137 @@ class Ninjutsu(Star):
 
         return target_id, count_val, is_group
 
+    async def _handle_connection_extras(
+        self, event: AstrMessageEvent, parts: List[str], is_admin: bool
+    ) -> Any:
+        """lmc扩展指令"""
+        sub = parts[0].lower() if parts else ""
+
+        if not parts or sub in ["l", "list"]:
+            help_text = ResponsePresenter.connection(is_admin, self.main_prefix)
+            if not self.connection_presets:
+                return event.plain_result(f"供应商:\n- 暂无可用供应商。\n\n{help_text}")
+
+            msg = ["供应商:"]
+            current_active_name = self.generation_service.conn_config.get("name")
+            for name, data in self.connection_presets.items():
+                prefix = "➡️" if name == current_active_name else "▪️"
+                msg.append(
+                    f"{prefix} {name} ({data.get('api_type', 'N/A')}, {len(data.get('api_keys', []))} keys)"
+                )
+            msg.extend(["", help_text])
+            return event.plain_result("\n".join(msg))
+
+        if sub == "to" and len(parts) == 2:
+            target = parts[1]
+            if target not in self.connection_presets:
+                return event.plain_result(ResponsePresenter.item_not_found("预设", target))
+
+            if "Connection_Config" not in self.conf:
+                self.conf["Connection_Config"] = {}
+            self.conf["Connection_Config"]["current_preset_name"] = target
+
+            self.generation_service.set_active_preset(self.connection_presets[target])
+            await self.config_mgr.save_config()
+            return event.plain_result(
+                ResponsePresenter.format_connection_switch_success(
+                    target, self.connection_presets[target]
+                )
+            )
+
+        if sub in ["debug", "d"] and is_admin:
+            basic_conf = self.conf.get("Basic_Config", {})
+            new_state = not basic_conf.get("debug_prompt", False)
+
+            if "Basic_Config" not in self.conf:
+                self.conf["Basic_Config"] = {}
+            self.conf["Basic_Config"]["debug_prompt"] = new_state
+
+            await self.config_mgr.save_config()
+            return event.plain_result(
+                f"{'✅' if new_state else '❌'} 调试模式已{'开启' if new_state else '关闭'}。"
+            )
+
+        if len(parts) >= 5 and parts[0].lower() == "add":
+            if not is_admin:
+                return event.plain_result(ResponsePresenter.unauthorized_admin())
+            name, api_type, api_url, model = parts[1], parts[2], parts[3], parts[4]
+            keys = parts[5].split(",") if len(parts) > 5 else []
+            new_data = {
+                "name": name,
+                "api_type": api_type,
+                "api_url": api_url,
+                "model": model,
+                "api_keys": keys,
+            }
+            async for r in self.config_mgr.perform_save_with_confirm(
+                event, self.connection_presets, name, new_data, "连接预设"
+            ):
+                await event.send(r)
+            await self._save_connections()
+            return True  # Signal that we handled it
+
+        return None
+
+    async def _handle_connection_update(
+        self, event: AstrMessageEvent, target_name: str, args: List[str], is_admin: bool
+    ) -> bool:
+        if not is_admin:
+            await event.send(event.plain_result(ResponsePresenter.unauthorized_admin()))
+            return True
+
+        if len(args) != 2:
+            return False
+
+        target_key, target_val = args[0], args[1]
+        allowed_keys = {"api_url", "model", "api_type", "api_base"}
+
+        if target_key not in allowed_keys:
+            await event.send(
+                event.plain_result(
+                    f"❌ 属性 [{target_key}] 不可修改。\n可选: {', '.join(allowed_keys)}"
+                )
+            )
+            return True
+
+        preset = self.connection_presets[target_name]
+        async for r in self.config_mgr.perform_save_with_confirm(
+            event,
+            preset,
+            target_key,
+            target_val,
+            f"预设[{target_name}]的{target_key}",
+        ):
+            await event.send(r)
+
+        if self.generation_service.conn_config.get("name") == target_name:
+            self.generation_service.set_active_preset(preset)
+        await self._save_connections()
+        return True
+
+    async def _on_connection_delete(self, deleted_key: str):
+        current_active_name = self.generation_service.conn_config.get("name")
+        if current_active_name == deleted_key:
+            new_name = next(iter(self.connection_presets.keys()), "GoogleDefault")
+
+            if "Connection_Config" not in self.conf:
+                self.conf["Connection_Config"] = {}
+            self.conf["Connection_Config"]["current_preset_name"] = new_name
+
+            if new_name in self.connection_presets:
+                self.generation_service.set_active_preset(
+                    self.connection_presets[new_name]
+                )
+            else:
+                self.generation_service.set_active_preset(
+                    {"name": "None", "api_keys": []}
+                )
+        await self._save_connections()
+
     # --- Event Handlers ---
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=5)
+    @require_service
     async def on_figurine_request(self, event: AstrMessageEvent):
         """预设/自定义图生图"""
         basic_conf = self.conf.get("Basic_Config", {})
@@ -160,6 +307,7 @@ class Ninjutsu(Star):
         event.stop_event()
 
     @filter.command("文生图", alias={"lmt"}, prefix_optional=True)
+    @require_service
     async def on_text_to_image_request(self, event: AstrMessageEvent):
         """预设/自定义文生图"""
         first_token = CommandParser.extract_pure_command(
@@ -215,147 +363,31 @@ class Ninjutsu(Star):
             yield res
 
     @filter.command("lm连接", alias={"lmc"}, prefix_optional=True)
+    @require_service
     async def on_connection_management(self, event: AstrMessageEvent):
         """管理连接预设"""
         is_admin = self.config_mgr.is_admin(event)
 
-        async def handle_extras(evt, parts):
-            sub = parts[0].lower() if parts else ""
-
-            if not parts or sub in ["l", "list"]:
-                help_text = ResponsePresenter.connection(is_admin, self.main_prefix)
-                if not self.connection_presets:
-                    return evt.plain_result(
-                        f"供应商:\n- 暂无可用供应商。\n\n{help_text}"
-                    )
-                msg = ["供应商:"]
-                current_active_name = self.generation_service.conn_config.get("name")
-                for name, data in self.connection_presets.items():
-                    prefix = "➡️" if name == current_active_name else "▪️"
-                    msg.append(
-                        f"{prefix} {name} ({data.get('api_type', 'N/A')}, {len(data.get('api_keys', []))} keys)"
-                    )
-                msg.extend(["", help_text])
-                return evt.plain_result("\n".join(msg))
-
-            if sub == "to" and len(parts) == 2:
-                target = parts[1]
-                if target not in self.connection_presets:
-                    return evt.plain_result(
-                        ResponsePresenter.item_not_found("预设", target)
-                    )
-
-                if "Connection_Config" not in self.conf:
-                    self.conf["Connection_Config"] = {}
-                self.conf["Connection_Config"]["current_preset_name"] = target
-
-                self.generation_service.set_active_preset(
-                    self.connection_presets[target]
-                )
-                await self.config_mgr.save_config()
-                return evt.plain_result(
-                    ResponsePresenter.format_connection_switch_success(
-                        target, self.connection_presets[target]
-                    )
-                )
-
-            if sub in ["debug", "d"] and is_admin:
-                basic_conf = self.conf.get("Basic_Config", {})
-                new_state = not basic_conf.get("debug_prompt", False)
-
-                if "Basic_Config" not in self.conf:
-                    self.conf["Basic_Config"] = {}
-                self.conf["Basic_Config"]["debug_prompt"] = new_state
-
-                await self.config_mgr.save_config()
-                return evt.plain_result(
-                    f"{'✅' if new_state else '❌'} 调试模式已{'开启' if new_state else '关闭'}。"
-                )
-
-            if len(parts) >= 5 and parts[0].lower() == "add":
-                if not is_admin:
-                    return evt.plain_result(ResponsePresenter.unauthorized_admin())
-                name, api_type, api_url, model = parts[1], parts[2], parts[3], parts[4]
-                keys = parts[5].split(",") if len(parts) > 5 else []
-                new_data = {
-                    "name": name,
-                    "api_type": api_type,
-                    "api_url": api_url,
-                    "model": model,
-                    "api_keys": keys,
-                }
-                async for r in self.config_mgr.perform_save_with_confirm(
-                    evt, self.connection_presets, name, new_data, "连接预设"
-                ):
-                    await evt.send(r)
-                await self._save_connections()
-                return True
-
-            return None
-
-        async def custom_conn_update(evt, target_name, args):
-            if not is_admin:
-                await evt.send(evt.plain_result(ResponsePresenter.unauthorized_admin()))
-                return True
-
-            if len(args) != 2:
-                return False
-
-            target_key, target_val = args[0], args[1]
-            allowed_keys = {"api_url", "model", "api_type", "api_base"}
-
-            if target_key not in allowed_keys:
-                await evt.send(
-                    evt.plain_result(
-                        f"❌ 属性 [{target_key}] 不可修改。\n可选: {', '.join(allowed_keys)}"
-                    )
-                )
-                return True
-
-            preset = self.connection_presets[target_name]
-            async for r in self.config_mgr.perform_save_with_confirm(
-                evt,
-                preset,
-                target_key,
-                target_val,
-                f"预设[{target_name}]的{target_key}",
-            ):
-                await evt.send(r)
-
-            if self.generation_service.conn_config.get("name") == target_name:
-                self.generation_service.set_active_preset(preset)
-            await self._save_connections()
-            return True
-
-        async def after_delete(deleted_key: str):
-            current_active_name = self.generation_service.conn_config.get("name")
-            if current_active_name == deleted_key:
-                new_name = next(iter(self.connection_presets.keys()), "GoogleDefault")
-
-                if "Connection_Config" not in self.conf:
-                    self.conf["Connection_Config"] = {}
-                self.conf["Connection_Config"]["current_preset_name"] = new_name
-
-                if new_name in self.connection_presets:
-                    self.generation_service.set_active_preset(
-                        self.connection_presets[new_name]
-                    )
-                else:
-                    self.generation_service.set_active_preset(
-                        {"name": "None", "api_keys": []}
-                    )
-            await self._save_connections()
+        extra_handler = lambda evt, pts: self._handle_connection_extras(
+            evt, pts, is_admin
+        )
+        update_handler = lambda evt, name, args: self._handle_connection_update(
+            evt, name, args, is_admin
+        )
+        delete_handler = self._on_connection_delete
+        display_handler = lambda k, v: ResponsePresenter.format_connection_detail(
+            k, v, self.main_prefix
+        )
 
         async for res in self.config_mgr.handle_crud_command(
             event,
             ["lm连接", "lmc"],
             self.connection_presets,
             "连接预设",
-            after_delete_callback=after_delete,
-            extra_cmd_handler=handle_extras,
-            custom_update_handler=custom_conn_update,
-            custom_display_handler=lambda k,
-            v: ResponsePresenter.format_connection_detail(k, v, self.main_prefix),
+            after_delete_callback=delete_handler,
+            extra_cmd_handler=extra_handler,
+            custom_update_handler=update_handler,
+            custom_display_handler=display_handler,
         ):
             yield res
 
@@ -435,6 +467,7 @@ class Ninjutsu(Star):
             yield event.plain_result("❌ 权限不足或指令格式错误。")
 
     @filter.command("lm密钥", alias={"lmk"}, prefix_optional=True)
+    @require_service
     async def on_key_management(self, event: AstrMessageEvent):
         """独立&快捷的密钥管理"""
         if not self.config_mgr.is_admin(event):

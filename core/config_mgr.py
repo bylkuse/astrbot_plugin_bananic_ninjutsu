@@ -1,5 +1,3 @@
-import re
-import json
 import asyncio
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -60,16 +58,8 @@ class ConfigManager:
                 yield event.plain_result(f"💡 {item_name} [{key}] 内容未变更。")
                 return
 
-            old_str = (
-                json.dumps(old_value, sort_keys=True, ensure_ascii=False)
-                if isinstance(old_value, (dict, list))
-                else str(old_value)
-            )
-            new_str = (
-                json.dumps(new_value, sort_keys=True, ensure_ascii=False)
-                if isinstance(new_value, (dict, list))
-                else str(new_value)
-            )
+            old_str = await asyncio.to_thread(ConfigSerializer.serialize_any, old_value)
+            new_str = await asyncio.to_thread(ConfigSerializer.serialize_any, new_value)
 
             preview_old = old_str[:100] + "..." if len(old_str) > 100 else old_str
             preview_new = new_str[:100] + "..." if len(new_str) > 100 else new_str
@@ -226,8 +216,11 @@ class ConfigManager:
                 if custom_display_handler:
                     msg = custom_display_handler(target_key, content)
                 else:
-                    msg = ResponsePresenter.format_preset_detail(
-                        item_name, target_key, content
+                    msg = await asyncio.to_thread(
+                        ResponsePresenter.format_preset_detail,
+                        item_name,
+                        target_key,
+                        content,
                     )
                 yield event.plain_result(msg)
                 return

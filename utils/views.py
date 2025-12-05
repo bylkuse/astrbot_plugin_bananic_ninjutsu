@@ -1,8 +1,7 @@
 import re
-import json
 from typing import Any, Dict, List, Callable, Optional, Union
 from ..api_client import APIError, APIErrorType
-
+from ..utils.serializer import ConfigSerializer
 
 class ResponsePresenter:
     """视图层"""
@@ -140,7 +139,7 @@ class ResponsePresenter:
                 for i, (uid, c) in enumerate(data.top_users[:5]):
                     icon = ResponsePresenter._get_rank_icon(i)
                     # 保护隐私
-                    masked_uid = uid[:3] + "****" + uid[-4:] if len(uid) > 7 else uid
+                    masked_uid = uid[:3] + "\\*\\*\\*\\*" + uid[-4:] if len(uid) > 7 else uid
                     lines.append(f"{icon} {masked_uid}  —  {c}次")
                 msg_parts.append("\n".join(lines))
                 has_data = True
@@ -353,10 +352,7 @@ class ResponsePresenter:
 
     @classmethod
     def format_preset_detail(cls, item_name: str, key: str, content: Any) -> str:
-        content_str = str(content)
-        if isinstance(content, dict):
-            content_str = json.dumps(content, indent=2, ensure_ascii=False)
-
+        content_str = ConfigSerializer.serialize_pretty(content)
         msg_parts = [f"📝 {item_name} [{key}] 内容:\n{content_str}"]
 
         if isinstance(content, str):

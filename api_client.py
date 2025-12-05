@@ -2,7 +2,6 @@ import asyncio
 import base64
 import io
 import re
-import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -25,7 +24,7 @@ except ImportError:
     ThinkingConfig = None
 
 from .core.images import ImageUtils
-
+from .utils.serializer import ConfigSerializer
 
 class APIErrorType(Enum):
     INVALID_ARGUMENT = "invalid_argument"
@@ -126,13 +125,15 @@ class APIClient:
         self._key_lock = asyncio.Lock()
         self._cooldown_keys: Dict[str, float] = {}
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """获取&创建session"""
-        if self._session is None or self._session.closed:
-            connector = aiohttp.TCPConnector(limit=100, ssl=False)
-            self._session = aiohttp.ClientSession(connector=connector)
-        return self._session
+    if self._session is None or self._session.closed:
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                connector = aiohttp.TCPConnector(limit=100, ssl=False)
+                self._session = aiohttp.ClientSession(connector=connector)
+    return self._session
 
     async def terminate(self):
         if self._session and not self._session.closed:
@@ -306,8 +307,11 @@ class APIClient:
         if config.prompt:
             contents.append(config.prompt)
 
-        for img_data in processed_images:
-            contents.append(PILImage.open(io.BytesIO(img_data)))
+        if processed_images:
+            def _load_images():
+                return [PILImage.open(io.BytesIO(img_data)) for img_data in processed_images]
+            images = await asyncio.to_thread(_load_images)
+            contents.extend(images)
 
         if not contents:
             raise APIError(APIErrorType.INVALID_ARGUMENT, "没有有效的内容发送给 API")
@@ -480,7 +484,7 @@ class APIClient:
             image_url = self._extract_image_url_from_response(data)
 
             if not image_url:
-                debug_json = json.dumps(data, ensure_ascii=False, indent=2)
+                debug_json = ConfigSerializer.serialize_pretty(data)
                 logger.error(
                     f"OpenAI 响应解析失败，无法提取图片 URL。\n完整响应数据:\n{debug_json}"
                 )
@@ -510,7 +514,6 @@ class APIClient:
         return await ImageUtils.compress_image(raw_image_bytes)
 
     def _extract_image_url_from_response(self, data: Dict[str, Any]) -> str | None:
-        """结构化解析响应"""
         # Image Generation
         if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
             item = data["data"][0]
@@ -538,7 +541,7 @@ class APIClient:
             # content解析
             content = message.get("content", "")
             if content and isinstance(content, str):
-                # Markdown 图片语法
+                # Markdown图片语法
                 md_match = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', content)
                 if md_match:
                     return md_match.group(1).strip()
