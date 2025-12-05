@@ -31,17 +31,28 @@ class CommandParser:
     BOOLEAN_VALUE_KEYS = {"thinking"}
 
     @classmethod
-    def parse(cls, event: AstrMessageEvent, cmd_to_remove: str = "", prefixes: List[str] = None) -> ParsedCommand:
-        if prefixes is None: prefixes = []
+    def extract_pure_command(cls, text: str, prefixes: List[str]) -> Optional[str]:
+        """提取指令"""
+        text = text.strip()
         sorted_prefixes = sorted(prefixes, key=len, reverse=True)
 
-        target_cmd = cmd_to_remove.lower()
-
-        target_cmd_pure = target_cmd
+        text_no_prefix = text
         for p in sorted_prefixes:
-            if target_cmd.startswith(p):
-                target_cmd_pure = target_cmd[len(p):]
+            if text.startswith(p):
+                text_no_prefix = text[len(p):].strip()
                 break
+
+        if not text_no_prefix:
+            return None
+        return text_no_prefix.split()[0]
+
+    @classmethod
+    def parse(cls, event: AstrMessageEvent, cmd_aliases: List[str] = None, prefixes: List[str] = None) -> ParsedCommand:
+        """解析指令"""
+        if prefixes is None: prefixes = []
+        if cmd_aliases is None: cmd_aliases = []
+        sorted_prefixes = sorted(prefixes, key=len, reverse=True)
+        target_cmds = {c.lower() for c in cmd_aliases}
 
         raw_tokens = []
         ats = []
@@ -69,14 +80,16 @@ class CommandParser:
             if not cmd_removed and isinstance(token, str):
                 token_lower = token.lower()
                 token_pure = token_lower
+
                 for p in sorted_prefixes:
                     if token_lower.startswith(p):
                         token_pure = token_lower[len(p):]
                         break
 
-                if token_pure == target_cmd_pure:
+                if target_cmds and (token_pure in target_cmds):
                     cmd_removed = True
                     continue
+
             clean_tokens.append(token)
 
         # 解析循环

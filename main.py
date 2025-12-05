@@ -13,7 +13,7 @@ from .core.images import ImageUtils
 from .core.config_mgr import ConfigManager
 from .services.generation import GenerationService
 from .utils.serializer import ConfigSerializer
-from .utils.parser import CommandParser
+from .utils.parser import CommandParser, ParsedCommand
 from .utils.views import ResponsePresenter
 
 @register(
@@ -73,38 +73,30 @@ class Ninjutsu(Star):
         self.conf["Connection_Config"]["connection_presets"] = ConfigSerializer.dump_json_list(self.connection_presets)
         await self.config_mgr.save_config()
 
-    def _extract_pure_command(self, text: str) -> str:
-        for p in self.global_prefixes:
-            if text.startswith(p):
-                return text[len(p):]
-        return text
+    def _resolve_admin_cmd(self, event: AstrMessageEvent, parsed: ParsedCommand) -> Tuple[Optional[str], Optional[int], bool]:
+        target_id = str(parsed.first_at.qq) if parsed.first_at else None
+        numbers = [int(x) for x in parsed.text.split() if x.lstrip("-").isdigit()]
 
-    def _resolve_admin_cmd(self, event: AstrMessageEvent, parts: List[str]) -> Tuple[Optional[str], Optional[int], bool]:
-        at_seg = next((s for s in event.message_obj.message if isinstance(s, At)), None)
-        target_id = str(at_seg.qq) if at_seg else None
         count_val = None
         is_group = False
 
-        numbers = [p for p in parts if p.lstrip("-").isdigit()]
+        if target_id:
+            if numbers: count_val = numbers[0]
 
-        if at_seg:
-            if numbers: count_val = int(numbers[0])
-            else: pass
         elif len(numbers) >= 2:
-            target_id = numbers[0]
-            count_val = int(numbers[1])
+            target_id = str(numbers[0])
+            count_val = numbers[1]
+
         elif len(numbers) == 1:
-            val = int(numbers[0])
+            val = numbers[0]
             if event.get_group_id():
                 target_id = event.get_group_id()
                 count_val = val
                 is_group = True
             else:
-                target_id = str(val) 
-        else:
-            pass
+                target_id = str(val)
 
-        if not target_id:
+        if not target_id and not is_group:
             target_id = event.get_sender_id()
 
         return target_id, count_val, is_group
@@ -120,12 +112,10 @@ class Ninjutsu(Star):
         text = event.message_str.strip()
         if not text: return
 
-        cmd_with_prefix = text.split()[0].strip()
-        cmd_pure = self._extract_pure_command(cmd_with_prefix) 
-
+        cmd_pure = CommandParser.extract_pure_command(text, self.global_prefixes)
+        if not cmd_pure: return
         bnn_command = basic_conf.get("extra_prefix", "lmi")
-
-        parsed = CommandParser.parse(event, cmd_with_prefix, prefixes=self.global_prefixes)
+        parsed = CommandParser.parse(event, cmd_aliases=[cmd_pure], prefixes=self.global_prefixes)
         params = parsed.params
         if parsed.first_at: params['first_at'] = parsed.first_at
 
@@ -137,6 +127,8 @@ class Ninjutsu(Star):
             cmd_display = f"#{cmd_pure}"
         elif self.pm.get_preset(cmd_pure):
             target_text = cmd_pure
+            if parsed.text:
+                 params["additional_prompt"] = parsed.text
             cmd_display = f"#{cmd_pure}"
         else:
             return
@@ -149,14 +141,15 @@ class Ninjutsu(Star):
 
     @filter.command("文生图", alias={"lmt"}, prefix_optional=True)
     async def on_text_to_image_request(self, event: AstrMessageEvent):
-        raw_text = event.message_str.strip()
-        cmd_part = raw_text.split()[0]
-        parsed = CommandParser.parse(event, cmd_part, prefixes=self.global_prefixes)
+        first_token = CommandParser.extract_pure_command(event.message_str, self.global_prefixes)
+        parsed = CommandParser.parse(event, cmd_aliases=[first_token] if first_token else [], prefixes=self.global_prefixes)
         params = parsed.params
         if parsed.first_at: params['first_at'] = parsed.first_at
+        cmd_name = first_token if first_token else "lmt"
+        cmd_display = f"{self.main_prefix}{cmd_name}"
 
         async for res in self.generation_service.run_generation_workflow(
-            event, parsed.text, params, False, "#lmt", self.context, self.config_mgr.is_admin(event)
+            event, parsed.text, params, False, cmd_display, self.context, self.config_mgr.is_admin(event)
         ):
             yield res
         event.stop_event()
@@ -279,30 +272,38 @@ class Ninjutsu(Star):
 
     @filter.command("lm帮助", alias={"lmh"}, prefix_optional=True)
     async def on_prompt_help(self, event: AstrMessageEvent):
-        cmd_text = self.config_mgr.strip_command(event.message_str.strip(), ["lm帮助", "lmh"])
+        parsed = CommandParser.parse(event, cmd_aliases=["lm帮助", "lmh"], prefixes=self.global_prefixes)
+        cmd_text = parsed.text
         sub = cmd_text.strip().lower()
-        if sub in ["参数", "param", "params", "p", "--help"]: yield event.plain_result(ResponsePresenter.help_params()); return
-        if sub in ["变量", "var", "vars", "v"]: yield event.plain_result(ResponsePresenter.help_vars()); return
+        is_help_flag = parsed.params.get("help") or sub == "--help"
+
+        if sub in ["参数", "param", "params", "p"] or is_help_flag: 
+            yield event.plain_result(ResponsePresenter.help_params())
+            return
+        if sub in ["变量", "var", "vars", "v"]: 
+            yield event.plain_result(ResponsePresenter.help_vars())
+            return
+
         extra_prefix = self.conf.get("Basic_Config", {}).get("extra_prefix", "lmi")
         yield event.plain_result(ResponsePresenter.main_menu(extra_prefix, self.main_prefix))
 
     @filter.command("lm次数", alias={"lm"}, prefix_optional=True)
     async def on_counts_management(self, event: AstrMessageEvent):
-        cmd_text = self.config_mgr.strip_command(event.message_str.strip(), ["lm次数", "lm"])
-        parts = cmd_text.split()
+        parsed = CommandParser.parse(event, cmd_aliases=["lm次数", "lm"], prefixes=self.global_prefixes)
+
         user_id = event.get_sender_id()
         group_id = event.get_group_id()
         is_admin = self.config_mgr.is_admin(event)
 
         # 看板
-        if not parts:
+        if not parsed.text.strip() and not parsed.first_at:
             data = await self.stats.get_dashboard_with_checkin(user_id, group_id, self.conf)
             yield event.plain_result(ResponsePresenter.stats_dashboard(data, group_id))
             return
 
         # 次数
         if is_admin:
-            target_id, count_val, is_group = self._resolve_admin_cmd(event, parts)
+            target_id, count_val, is_group = self._resolve_admin_cmd(event, parsed)
 
             if count_val is not None:
                 if not target_id:
@@ -326,7 +327,8 @@ class Ninjutsu(Star):
             yield event.plain_result(ResponsePresenter.unauthorized_admin())
             return
 
-        cmd_text = self.config_mgr.strip_command(event.message_str.strip(), ["lm密钥", "lmk"])
+        parsed = CommandParser.parse(event, cmd_aliases=["lm密钥", "lmk"], prefixes=self.global_prefixes)
+        cmd_text = parsed.text
         parts = cmd_text.split()
 
         if not parts: 

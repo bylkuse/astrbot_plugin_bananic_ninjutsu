@@ -41,24 +41,34 @@ class ImageUtils:
         avatar_url = f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
         return await cls.download_image(avatar_url, proxy=proxy)
 
-    @staticmethod
-    def _process_image_sync(raw: bytes, ensure_white_bg: bool = False) -> bytes:
+    def _process_image_sync(raw: bytes, ensure_white_bg: bool = False, max_size: int = 2048) -> bytes:
+        PILImage.MAX_IMAGE_PIXELS = 100000000  # 限制大图
         img_io = io.BytesIO(raw)
         try:
             with PILImage.open(img_io) as img:
+                width, height = img.size
+                if width > max_size or height > max_size:
+                    img.thumbnail((max_size, max_size), PILImage.Resampling.LANCZOS)
+
                 if getattr(img, "is_animated", False):
                     img.seek(0)
 
-                img = img.convert("RGBA")
+                if ensure_white_bg or img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert("RGBA")
 
-                if ensure_white_bg:
+                if ensure_white_bg and img.mode == 'RGBA':
                     bg = PILImage.new('RGB', img.size, (255, 255, 255))
                     bg.paste(img, (0, 0), img)
                     img = bg
+                elif img.mode == 'RGBA':
+                    pass 
 
                 out_io = io.BytesIO()
-                fmt = "JPEG" if img.mode == "RGB" else "PNG"
-                img.save(out_io, format=fmt)
+                if img.mode == "RGB":
+                    img.save(out_io, format="JPEG", quality=85) 
+                else:
+                    img.save(out_io, format="PNG", compress_level=3) 
+
                 return out_io.getvalue()
         except Exception as e:
             logger.warning(f"图片处理出错 (使用原图): {e}")
@@ -155,6 +165,9 @@ class ImageUtils:
         def _blocking_compress():
             try:
                 with PILImage.open(io.BytesIO(raw_bytes)) as img:
+                    if max(img.size) > 2048:
+                        img.thumbnail((2048, 2048), PILImage.Resampling.LANCZOS)
+
                     if img.mode in ("RGBA", "P"):
                         img = img.convert("RGB")
 
@@ -163,7 +176,6 @@ class ImageUtils:
                     compressed_bytes = output_io.getvalue()
 
                     if len(compressed_bytes) < len(raw_bytes):
-                        logger.info(f"图片压缩: {len(raw_bytes)/1024:.0f}KB -> {len(compressed_bytes)/1024:.0f}KB")
                         return compressed_bytes
                     return raw_bytes
             except Exception as e:

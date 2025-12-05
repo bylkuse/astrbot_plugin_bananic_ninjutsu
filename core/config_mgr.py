@@ -6,6 +6,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
 from astrbot.api.star import Context
 
+from ..utils.parser import CommandParser
 from ..utils.serializer import ConfigSerializer
 from ..utils.views import ResponsePresenter
 from .prompt import PromptManager
@@ -32,16 +33,6 @@ class ConfigManager:
             await asyncio.to_thread(self.conf.save_config)
         except Exception as e:
             raise RuntimeError(f"保存配置失败: {e}")
-
-    def strip_command(self, text: str, command_aliases: List[str]) -> str:
-        """剥离指令"""
-        sorted_aliases = sorted(command_aliases, key=len, reverse=True)
-
-        prefix_pattern = "|".join(re.escape(p) for p in self.prefixes)
-        alias_pattern = "|".join(re.escape(c) for c in sorted_aliases)
-
-        pattern = fr'^({prefix_pattern})?({alias_pattern})\s*'
-        return re.sub(pattern, '', text, count=1, flags=re.IGNORECASE).strip()
 
     async def perform_save_with_confirm(self, event: AstrMessageEvent, 
                                    target_dict: Dict[str, Any], 
@@ -99,8 +90,9 @@ class ConfigManager:
                                   custom_update_handler: Optional[Callable[[AstrMessageEvent, str, List[str]], Awaitable[bool]]] = None,
                                   custom_display_handler: Optional[Callable[[str, Any], str]] = None):
         """增删改查"""
-        is_admin = self.is_admin(event) 
-        cmd_text = self.strip_command(event.message_str.strip(), cmd_list)
+        is_admin = self.is_admin(event)
+        parsed = CommandParser.parse(event, cmd_aliases=cmd_list, prefixes=self.prefixes)
+        cmd_text = parsed.text.strip()
         parts = cmd_text.split()
         cmd_display_name = f"{self.main_prefix}{cmd_list[0]}"
 
