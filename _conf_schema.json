@@ -12,9 +12,9 @@
       },
       "extra_prefix": {
         "description": "自定义生图前缀",
-        "hint": "用于触发自定义Prompt模式。例如设置为 'bnn'，则用户发送 'bnn <描述>' 即可直接调用。",
+        "hint": "用于触发自定义Prompt模式。例如设置为 'lmi'，则用户发送 'lmi <描述>' 即可直接调用。",
         "type": "string",
-        "default": "bnn"
+        "default": "lmi"
       },
       "debug_prompt": {
         "description": "调试模式",

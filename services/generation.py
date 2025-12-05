@@ -11,12 +11,15 @@ from ..core.images import ImageUtils
 from ..utils.views import ResponsePresenter
 
 class GenerationService:
-    def __init__(self, api_client: APIClient, stats_manager: StatsManager, prompt_manager: PromptManager, config: Any, active_preset: Dict[str, Any]):
+    def __init__(self, api_client: APIClient, stats_manager: StatsManager, 
+                 prompt_manager: PromptManager, config: Any, 
+                 active_preset: Dict[str, Any], main_prefix: str = "#"):
         self.api_client = api_client
         self.stats = stats_manager
         self.pm = prompt_manager
         self.conf = config
         self.conn_config = active_preset
+        self.main_prefix = main_prefix
     
     def set_active_preset(self, preset_data: Dict[str, Any]):
         self.conn_config = preset_data
@@ -103,7 +106,7 @@ class GenerationService:
                     return
 
                 txn.mark_failed(f"{e.error_type.name}: {e.raw_message}")
-                yield event.plain_result(ResponsePresenter.api_error_message(e, is_master))
+                yield event.plain_result(ResponsePresenter.api_error_message(e, is_master, self.main_prefix))
 
             except Exception as e:
                 txn.mark_failed(str(e))

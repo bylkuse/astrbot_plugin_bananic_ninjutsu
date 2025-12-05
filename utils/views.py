@@ -57,7 +57,7 @@ class ResponsePresenter:
     ]
 
     @staticmethod
-    def api_error_message(error: APIError, is_master: bool) -> str:
+    def api_error_message(error: APIError, is_master: bool, p: str = "#") -> str:
         hint = ResponsePresenter._ERROR_MESSAGES.get(error.error_type, error.raw_message)
         status_info = f" (HTTP {error.status_code})" if error.status_code else ""
 
@@ -67,7 +67,7 @@ class ResponsePresenter:
             parts.append(f"🔍 详情: {error.raw_message[:100]}...")
 
         if error.error_type != APIErrorType.SAFETY_BLOCK:
-            parts.append("👉 如持续失败，请尝试 #lmc 切换连接")
+            parts.append(f"👉 如持续失败，请尝试 {p}lmc 切换连接")
 
         if not is_master:
             parts.append("(本次失败不扣除次数)")
@@ -99,6 +99,12 @@ class ResponsePresenter:
         return f"❌ {item_name} [{key}] 已存在。"
 
     @staticmethod
+    def _get_rank_icon(index: int) -> str:
+        """根据排名返回奖牌图标"""
+        medals = ["🥇", "🥈", "🥉"]
+        return medals[index] if index < len(medals) else f"NO.{index + 1}"
+
+    @staticmethod
     def stats_dashboard(data: Any, group_id: str = None) -> str:
         msg_parts = []
         if data.checkin_result and data.checkin_result.message:
@@ -110,20 +116,31 @@ class ResponsePresenter:
         msg_parts.append(quota_msg)
 
         if data.leaderboard_date:
-            stats_msg = [f"\n📊 **今日榜单 ({data.leaderboard_date})**"]
+            msg_parts.append(f"\n📊 **今日榜单 ({data.leaderboard_date})**")
             has_data = False
 
             if data.top_groups:
-                stats_msg.append("👥 群组TOP: " + " | ".join([f"群{gid}({c})" for gid, c in data.top_groups[:3]]))
+                lines = ["👥 群组活跃 TOP3:"]
+                for i, (gid, c) in enumerate(data.top_groups[:3]):
+                    icon = ResponsePresenter._get_rank_icon(i)
+                    lines.append(f"{icon} 群{gid}  —  {c}次")
+                msg_parts.append("\n".join(lines))
                 has_data = True
+
             if data.top_users:
-                stats_msg.append("👤 用户TOP: " + " | ".join([f"{uid}({c})" for uid, c in data.top_users[:5]]))
+                lines = ["👤 个人活跃 TOP5:"]
+                for i, (uid, c) in enumerate(data.top_users[:5]):
+                    icon = ResponsePresenter._get_rank_icon(i)
+                    # 保护隐私
+                    masked_uid = uid[:3] + "****" + uid[-4:] if len(uid) > 7 else uid
+                    lines.append(f"{icon} {masked_uid}  —  {c}次")
+                msg_parts.append("\n".join(lines))
                 has_data = True
 
-            if not has_data: stats_msg.append("💤 暂无数据 (快来抢沙发)")
-            msg_parts.append("\n".join(stats_msg))
+            if not has_data: 
+                msg_parts.append("💤 暂无数据 (快来抢沙发)")
 
-        return "\n".join(msg_parts)
+        return "\n\n".join(msg_parts)
 
     @staticmethod
     def admin_count_modification(target: str, count: int, new_total: int, is_group: bool = False) -> str:
@@ -138,29 +155,28 @@ class ResponsePresenter:
         return reply
 
     @staticmethod
-    def connection(is_admin: bool) -> str:
+    def connection(is_admin: bool, p: str = "#") -> str:
         lines = [
             "💡 连接管理指令:",
-            "#lm连接 (显示列表)",
-            "#lm连接 <名称> (查看详情)",
-            "#lm连接 to <名称> (切换连接)"
+            f"{p}lm连接 (显示列表)",
+            f"{p}lm连接 <名称> (查看详情)",
+            f"{p}lm连接 to <名称> (切换连接)"
         ]
         if is_admin:
             lines.extend([
                 "🔧 管理员指令:",
-                "#lm连接 add <name> <type> <url> <model> [keys] (添加)",
-                "#lm连接 del <name> (删除)",
-                "#lm连接 ren <旧名> <新名> (重命名)",
-                "#lm连接 debug (调试模式)"
+                f"{p}lm连接 add <name> <type> <url> <model> [keys] (添加)",
+                f"{p}lm连接 del <name> (删除)",
+                f"{p}lm连接 ren <旧名> <新名> (重命名)",
+                f"{p}lm连接 debug (调试模式)"
             ])
         return "\n".join(lines)
 
     @staticmethod
-    def format_connection_detail(name: str, data: Dict[str, Any]) -> str:
+    def format_connection_detail(name: str, data: Dict[str, Any], p: str = "#") -> str:
         keys = data.get('api_keys', [])
         count = len(keys)
-
-        key_info = f"{count} 个" + (" (请使用 #lmk 查看或管理)" if count > 0 else "")
+        key_info = f"{count} 个" + (f" (请使用 {p}lmk 查看或管理)" if count > 0 else "")
 
         return (
             f"📝 连接预设 [{name}] 详情:\n"
@@ -182,7 +198,7 @@ class ResponsePresenter:
         )
 
     @staticmethod
-    def format_key_list(name: str, keys: List[str]) -> str:
+    def format_key_list(name: str, keys: List[str], p: str = "#") -> str:
         if not keys:
             return f"🔑 预设 [{name}] 暂无配置任何 Key。"
         lines = [f"🔑 预设 [{name}] 密钥列表 (共{len(keys)}个):"]
@@ -193,16 +209,16 @@ class ResponsePresenter:
                 masked_key = k 
 
             lines.append(f"{i+1}. {masked_key}")
-        lines.append("\n💡 指令提示: #lmk del <预设名> <序号> 删除指定Key")
+        lines.append(f"\n💡 指令提示: {p}lmk del <预设名> <序号> 删除指定Key")
         return "\n".join(lines)
 
     @staticmethod
-    def key_management(current_preset: str) -> str:
+    def key_management(current_preset: str, p: str = "#") -> str:
         return (
             f'🔑 Key 管理指令 (管理员):\n'
-            f'#lmk [预设名] - 查看指定预设的Key\n'
-            f'#lmk add <预设名> <Key1> [Key2]... - 添加Key\n'
-            f'#lmk del <预设名> <序号|all> - 删除Key\n'
+            f'{p}lmk [预设名] - 查看指定预设的Key\n'
+            f'{p}lmk add <预设名> <Key1> [Key2]... - 添加Key\n'
+            f'{p}lmk del <预设名> <序号|all> - 删除Key\n'
             f'注: 当前连接预设为 [{current_preset}]'
         )
 
@@ -244,45 +260,44 @@ class ResponsePresenter:
         )
 
     @staticmethod
-    def main_menu(bnn_cmd: str) -> str:
+    def main_menu(bnn_cmd: str, p: str = "#") -> str:
         return f"""🍌 【香蕉忍法帖】
-💡<请用实际的唤醒词替换 '#' ,如 '/'>
 --- 🖼️ 生成 ---
 ● 文生图
-  ▸ 指令: #lmt <预设名/提示词>
+  ▸ 指令: {p}lmt <预设名/提示词>
   ▸ 描述: 根据文字描述创作图片
 ● 图生图 (使用预设)
-  ▸ 指令: (发送或引用图片) + #<预设名>
+  ▸ 指令: (发送或引用图片) + {p}<预设名>
   ▸ 描述: 使用预设提示词处理图片
 ● 图生图 (自定义)
-  ▸ 指令: (发送或引用图片) + #{bnn_cmd} <提示词>
+  ▸ 指令: (发送或引用图片) + {p}{bnn_cmd} <提示词>
   ▸ 描述: 根据你的提示词进行创作
 ‍👩‍👧‍👧<支持处理多图、多@>
 
 --- 📁 预设 ---
 ● 预设预览/管理
   ▸ 格式:
-    #lmp 或 #lm预设 ▸ 列表预览
-    #lmo 或 #lm优化 ▸ 优化预设预览
+    {p}lmp 或 {p}lm预设 ▸ 列表预览
+    {p}lmo 或 {p}lm优化 ▸ 优化预设预览
   ▸ 通用操作:
-    #lmp <名称>:<内容> ▸ 添加/覆盖
-    #lmp del/ren ... ▸ 删除/重命名
+    {p}lmp <名称>:<内容> ▸ 添加/覆盖
+    {p}lmp del/ren ... ▸ 删除/重命名
 
 --- 🔧 管理 ---
 ● 综合面板
-  ▸ 指令: #lm 或 #lm次数
+  ▸ 指令: {p}lm 或 {p}lm次数
   ▸ 描述: 签到获取次数、查看剩余及今日排行
   ▸ 管理参数: 个人/群组次数管理
 ● 连接管理
-  ▸ 指令: #lmc 或 #lm连接
-  ▸ 描述: 查看所有可用的后端模型连接，并可按提示切换。（供应商故障时的后备选项）
+  ▸ 指令: {p}lmc 或 {p}lm连接
+  ▸ 描述: 查看所有可用的后端模型连接，并可按提示切换。
 ● 密钥管理 
-  ▸ 指令: #lmk 或 #lm密钥
+  ▸ 指令: {p}lmk 或 {p}lm密钥
 
 --- 📚 进阶 ---
 发送以下指令查看详细说明👇
-#lmh 参数 ▸ 查看 --ar, --up, --s, --q 等参数
-#lmh 变量 ▸ 查看 %un%, %r%, %t% 等动态变量"""
+{p}lmh 参数 ▸ 查看 --ar, --up, --s, --q 等参数
+{p}lmh 变量 ▸ 查看 %un%, %r%, %t% 等动态变量"""
 
     @staticmethod
     def help_params() -> str:
@@ -306,7 +321,7 @@ class ResponsePresenter:
   ▸ 描述: 设置请求超时时间(秒)
 ● 补充描述 (--a)
   ▸ 示例: --a "拿着花"
-  ▸ 描述: 在预设或提示词末尾追加额外描述
+  ▸ 描述: 在预设或提示词末尾追加额外描述（支持变量）
 ● 自定义内容 (--p)
   ▸ 示例: --p 小黎明
   ▸ 描述: 配合支持 %p% 变量的预设使用，可动态插入自定义内容

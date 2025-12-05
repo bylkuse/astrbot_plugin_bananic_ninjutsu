@@ -20,6 +20,7 @@ class ConfigManager:
         raw_prefixes = context.get_config().get("command_prefixes", ["/"])
         if isinstance(raw_prefixes, str): raw_prefixes = [raw_prefixes]
         self.prefixes = sorted(raw_prefixes, key=len, reverse=True)
+        self.main_prefix = self.prefixes[0] if self.prefixes else "#"
 
     def is_admin(self, event: AstrMessageEvent) -> bool:
         admins = self.context.get_config().get("admins_id", [])
@@ -101,7 +102,7 @@ class ConfigManager:
         is_admin = self.is_admin(event) 
         cmd_text = self.strip_command(event.message_str.strip(), cmd_list)
         parts = cmd_text.split()
-        cmd_display_name = f"#{cmd_list[0]}"
+        cmd_display_name = f"{self.main_prefix}{cmd_list[0]}"
 
         # 扩展
         if extra_cmd_handler:

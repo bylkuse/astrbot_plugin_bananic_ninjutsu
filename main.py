@@ -20,7 +20,7 @@ from .utils.views import ResponsePresenter
     "astrbot_plugin_bananic_ninjutsu",
     "LilDawn",
     "适配napcat的Astrbot插件，用于🍌（nano banana），先进的变量&参数系统",
-    "0.0.5", 
+    "0.0.6", 
     "https://github.com/bylkuse/astrbot_plugin_bananic_ninjutsu",
 )
 class Ninjutsu(Star):
@@ -28,6 +28,11 @@ class Ninjutsu(Star):
         super().__init__(context)
         self.conf = config
         self.plugin_data_dir = StarTools.get_data_dir()
+
+        raw_prefixes = self.context.get_config().get("command_prefixes", ["/"])
+        if isinstance(raw_prefixes, str): raw_prefixes = [raw_prefixes]
+        self.global_prefixes = sorted(raw_prefixes, key=len, reverse=True)
+        self.main_prefix = self.global_prefixes[0] if self.global_prefixes else "#"
 
         self.pm = PromptManager(self.conf, self.plugin_data_dir)
         self.api_client = APIClient() 
@@ -54,12 +59,9 @@ class Ninjutsu(Star):
                 logger.error("未找到任何连接预设！")
 
         self.generation_service = GenerationService(
-            self.api_client, self.stats, self.pm, self.conf, active_preset_data
+            self.api_client, self.stats, self.pm, self.conf, active_preset_data,
+            main_prefix=self.main_prefix
         )
-
-        raw_prefixes = self.context.get_config().get("command_prefixes", ["/"])
-        if isinstance(raw_prefixes, str): raw_prefixes = [raw_prefixes]
-        self.global_prefixes = sorted(raw_prefixes, key=len, reverse=True)
 
     async def initialize(self):
         await self.stats.load_all_data()
@@ -121,7 +123,7 @@ class Ninjutsu(Star):
         cmd_with_prefix = text.split()[0].strip()
         cmd_pure = self._extract_pure_command(cmd_with_prefix) 
 
-        bnn_command = basic_conf.get("extra_prefix", "bnn")
+        bnn_command = basic_conf.get("extra_prefix", "lmi")
 
         parsed = CommandParser.parse(event, cmd_with_prefix, prefixes=self.global_prefixes)
         params = parsed.params
@@ -183,7 +185,7 @@ class Ninjutsu(Star):
             sub = parts[0].lower() if parts else ""
 
             if not parts or sub in ["l", "list"]:
-                help_text = ResponsePresenter.connection(is_admin)
+                help_text = ResponsePresenter.connection(is_admin, self.main_prefix)
                 if not self.connection_presets: return evt.plain_result(f"供应商:\n- 暂无可用供应商。\n\n{help_text}")
                 msg = ["供应商:"]
                 current_active_name = self.generation_service.conn_config.get("name")
@@ -272,7 +274,7 @@ class Ninjutsu(Star):
             after_delete_callback=after_delete, 
             extra_cmd_handler=handle_extras,
             custom_update_handler=custom_conn_update,
-            custom_display_handler=ResponsePresenter.format_connection_detail
+            custom_display_handler=lambda k, v: ResponsePresenter.format_connection_detail(k, v, self.main_prefix)
         ): yield res
 
     @filter.command("lm帮助", alias={"lmh"}, prefix_optional=True)
@@ -281,9 +283,8 @@ class Ninjutsu(Star):
         sub = cmd_text.strip().lower()
         if sub in ["参数", "param", "params", "p", "--help"]: yield event.plain_result(ResponsePresenter.help_params()); return
         if sub in ["变量", "var", "vars", "v"]: yield event.plain_result(ResponsePresenter.help_vars()); return
-
-        extra_prefix = self.conf.get("Basic_Config", {}).get("extra_prefix", "bnn")
-        yield event.plain_result(ResponsePresenter.main_menu(extra_prefix))
+        extra_prefix = self.conf.get("Basic_Config", {}).get("extra_prefix", "lmi")
+        yield event.plain_result(ResponsePresenter.main_menu(extra_prefix, self.main_prefix))
 
     @filter.command("lm次数", alias={"lm"}, prefix_optional=True)
     async def on_counts_management(self, event: AstrMessageEvent):
@@ -330,7 +331,7 @@ class Ninjutsu(Star):
 
         if not parts: 
             current_preset = self.generation_service.conn_config.get("name", "Unknown")
-            yield event.plain_result(ResponsePresenter.key_management(current_preset))
+            yield event.plain_result(ResponsePresenter.key_management(current_preset, self.main_prefix))
             return
 
         sub = parts[0].lower()
@@ -338,7 +339,7 @@ class Ninjutsu(Star):
 
         try:
             if sub == "add":
-                if len(args) < 2: yield event.plain_result("格式错误: #lmkey add <预设名> <Key1> [Key2]..."); return
+                if len(args) < 2: yield event.plain_result(f"格式错误: {self.main_prefix}lmk add <预设名> <Key1> [Key2]..."); return
                 name = args[0]
                 if name not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", name)); return
 
@@ -353,7 +354,7 @@ class Ninjutsu(Star):
                 await self._save_connections()
 
             elif sub == "del":
-                if len(args) < 2: yield event.plain_result("格式错误: #lmk del <预设名> <序号|all>"); return
+                if len(args) < 2: yield event.plain_result(f"格式错误: {self.main_prefix}lmk del <预设名> <序号|all>"); return
                 name, idx_str = args[0], args[1]
                 if name not in self.connection_presets: yield event.plain_result(ResponsePresenter.item_not_found("预设", name)); return
 
@@ -390,7 +391,7 @@ class Ninjutsu(Star):
 
                 keys = self.connection_presets[target_preset_name].get("api_keys", [])
 
-                yield event.plain_result(ResponsePresenter.format_key_list(target_preset_name, keys))
+                yield event.plain_result(ResponsePresenter.format_key_list(target_preset_name, keys, self.main_prefix))
 
         except Exception as e:
             logger.error(f"Key 操作失败: {e}", exc_info=True)

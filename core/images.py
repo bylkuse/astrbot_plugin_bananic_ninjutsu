@@ -134,21 +134,38 @@ class ImageUtils:
         if len(raw_bytes) <= threshold_mb * 1024 * 1024:
             return raw_bytes
 
+        # 魔数
+        def is_likely_image(data: bytes) -> bool:
+            if len(data) < 12: return False
+            # JPEG
+            if data.startswith(b'\xff\xd8\xff'): return True
+            # PNG
+            if data.startswith(b'\x89PNG\r\n\x1a\n'): return True
+            # GIF
+            if data.startswith(b'GIF8'): return True
+            # WEBP
+            if data.startswith(b'RIFF') and data[8:12] == b'WEBP': return True
+            # BMP
+            if data.startswith(b'BM'): return True
+            return False
+
+        if not is_likely_image(raw_bytes):
+            return raw_bytes
+
         def _blocking_compress():
             try:
-                with io.BytesIO(raw_bytes) as input_io:
-                    with PILImage.open(input_io) as img:
-                        if img.mode in ("RGBA", "P"):
-                            img = img.convert("RGB")
+                with PILImage.open(io.BytesIO(raw_bytes)) as img:
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
 
-                        output_io = io.BytesIO()
-                        img.save(output_io, format="JPEG", quality=quality, optimize=True)
-                        compressed_bytes = output_io.getvalue()
+                    output_io = io.BytesIO()
+                    img.save(output_io, format="JPEG", quality=quality, optimize=True)
+                    compressed_bytes = output_io.getvalue()
 
-                        if len(compressed_bytes) < len(raw_bytes):
-                            logger.info(f"图片压缩: {len(raw_bytes)/1024:.0f}KB -> {len(compressed_bytes)/1024:.0f}KB")
-                            return compressed_bytes
-                        return raw_bytes
+                    if len(compressed_bytes) < len(raw_bytes):
+                        logger.info(f"图片压缩: {len(raw_bytes)/1024:.0f}KB -> {len(compressed_bytes)/1024:.0f}KB")
+                        return compressed_bytes
+                    return raw_bytes
             except Exception as e:
                 logger.warning(f"图片压缩失败 (使用原图): {e}")
                 return raw_bytes

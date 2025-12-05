@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import time
@@ -134,9 +135,12 @@ class StatsManager:
             return default
 
     async def _save_json(self, file_path: Path, data: Any):
+        """原子写入"""
         try:
             content = json.dumps(data, ensure_ascii=False, indent=4)
-            await asyncio.to_thread(file_path.write_text, content, "utf-8")
+            temp_path = file_path.with_suffix(".tmp")
+            await asyncio.to_thread(temp_path.write_text, content, "utf-8")
+            await asyncio.to_thread(os.replace, temp_path, file_path)
         except Exception as e:
             logger.error(f"保存 {file_path} 失败: {e}")
 

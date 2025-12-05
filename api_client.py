@@ -1,6 +1,3 @@
-import os
-from contextlib import contextmanager
-
 import asyncio
 import base64
 import io
@@ -119,39 +116,6 @@ class APIClient:
         self._key_lock = asyncio.Lock()
         self._cooldown_keys: Dict[str, float] = {}
 
-    @contextmanager
-    def _temporary_proxy(self, proxy_url: str):
-        """临时代理"""
-        if not proxy_url:
-            yield
-            return
-
-        old_http = os.environ.get("HTTP_PROXY")
-        old_https = os.environ.get("HTTPS_PROXY")
-        old_all = os.environ.get("ALL_PROXY")
-
-        os.environ["HTTP_PROXY"] = proxy_url
-        os.environ["HTTPS_PROXY"] = proxy_url
-        os.environ["ALL_PROXY"] = proxy_url
-
-        try:
-            yield
-        finally:
-            if old_http is None:
-                os.environ.pop("HTTP_PROXY", None)
-            else:
-                os.environ["HTTP_PROXY"] = old_http
-
-            if old_https is None:
-                os.environ.pop("HTTPS_PROXY", None)
-            else:
-                os.environ["HTTPS_PROXY"] = old_https
-            
-            if old_all is None:
-                os.environ.pop("ALL_PROXY", None)
-            else:
-                os.environ["ALL_PROXY"] = old_all
-
     async def _get_valid_api_key(self, keys: List[str]) -> str:
         """轮询"""
         if not keys:
@@ -173,7 +137,7 @@ class APIClient:
                 if current_key not in self._cooldown_keys:
                     available_key = current_key
                     break
-            
+
             if available_key:
                 return available_key
 
@@ -261,14 +225,14 @@ class APIClient:
 
         for attempt in range(max_attempts):
             api_key = await self._get_valid_api_key(config.api_keys)
-            
+
             try:
                 if config.api_type == "openai":
                     image_bytes = await self._call_openai(api_key, config, processed_images)
                     return GenResult(image=image_bytes)
                 else:
                     return await self._call_google(api_key, config, processed_images)
-            
+
             except APIError as e:
                 if e.error_type in [APIErrorType.SAFETY_BLOCK, APIErrorType.INVALID_ARGUMENT, APIErrorType.DEBUG_INFO]:
                     raise e
@@ -286,7 +250,7 @@ class APIClient:
                     break
 
                 continue
-            
+
             except Exception as e:
                 logger.error(f"未捕获的异常: {e}", exc_info=True)
                 last_error = APIError(APIErrorType.UNKNOWN, str(e))
@@ -301,107 +265,106 @@ class APIClient:
         contents = []
         if config.prompt:
             contents.append(config.prompt)
-            
+
         for img_data in processed_images:
             contents.append(PILImage.open(io.BytesIO(img_data)))
 
         if not contents:
             raise APIError(APIErrorType.INVALID_ARGUMENT, "没有有效的内容发送给 API")
 
-        with self._temporary_proxy(config.proxy_url):
-            http_options = HttpOptions(
-                base_url=config.api_base,
-                api_version="v1beta",
-                timeout=config.timeout * 1000
-            )
+        http_options = HttpOptions(
+            base_url=config.api_base,
+            api_version="v1beta",
+            timeout=config.timeout * 1000
+        )
 
-            full_model_name = config.model if config.model.startswith("models/") else f"models/{config.model}"
-            client = genai.Client(api_key=api_key, http_options=http_options)
-            tools = [Tool(google_search=GoogleSearch())] if config.enable_search else []
+        full_model_name = config.model if config.model.startswith("models/") else f"models/{config.model}"
+        client = genai.Client(api_key=api_key, http_options=http_options)
+        tools = [Tool(google_search=GoogleSearch())] if config.enable_search else []
 
-            image_config = {}
-            if config.aspect_ratio != "default":
-                image_config["aspect_ratio"] = config.aspect_ratio
-            if config.image_size:
-                image_config["image_size"] = config.image_size
+        image_config = {}
+        if config.aspect_ratio != "default":
+            image_config["aspect_ratio"] = config.aspect_ratio
+        if config.image_size:
+            image_config["image_size"] = config.image_size
 
-            thinking_config = None
-            if config.thinking:
-                if ThinkingConfig:
-                    thinking_config = ThinkingConfig(include_thoughts=True)
-                else:
-                    logger.warning("ThinkingConfig 导入失败，跳过思维链配置。请更新 google-genai SDK。")
+        thinking_config = None
+        if config.thinking:
+            if ThinkingConfig:
+                thinking_config = ThinkingConfig(include_thoughts=True)
+            else:
+                logger.warning("ThinkingConfig 导入失败，跳过思维链配置。请更新 google-genai SDK。")
 
-            sdk_retries = 1
-            last_exception = None
+        sdk_retries = 1
+        last_exception = None
 
-            for i in range(sdk_retries + 1):
-                try:
-                    response = await asyncio.to_thread(
-                        client.models.generate_content,
-                        model=full_model_name,
-                        contents=contents,
-                        config=GenerateContentConfig.model_construct(
-                            response_modalities=['Text', 'Image'],
-                            max_output_tokens=2048,
-                            tools=tools if tools else None,
-                            image_config=image_config if image_config else None,
-                            thinking_config=thinking_config
-                        )
+        for i in range(sdk_retries + 1):
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=full_model_name,
+                    contents=contents,
+                    config=GenerateContentConfig.model_construct(
+                        response_modalities=['Text', 'Image'],
+                        max_output_tokens=2048,
+                        tools=tools if tools else None,
+                        image_config=image_config if image_config else None,
+                        thinking_config=thinking_config
+                    )
+                )
+
+                if not response.candidates:
+                    block_reason = "Unknown Block"
+                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                        block_reason = str(response.prompt_feedback.block_reason)
+                    raise APIError(APIErrorType.SAFETY_BLOCK, f"请求被拦截: {block_reason}")
+
+                candidate = response.candidates[0]
+
+                if hasattr(candidate, 'finish_reason') and candidate.finish_reason:
+                    reason = candidate.finish_reason.name
+                    if reason in ['PROHIBITED_CONTENT', 'IMAGE_SAFETY', 'SAFETY']:
+                        raise APIError(APIErrorType.SAFETY_BLOCK, f"内容安全拦截 ({reason})")
+                    elif reason not in ['STOP', 'MAX_TOKENS']:
+                        raise APIError(APIErrorType.SERVER_ERROR, f"生成异常中断: {reason}")
+
+                found_image = None
+                thoughts_text = []
+
+                for part in candidate.content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        found_image = part.inline_data.data
+
+                    elif hasattr(part, 'thought') and part.thought: 
+                        if hasattr(part, 'text') and part.text:
+                            thoughts_text.append(part.text)
+                    elif hasattr(part, 'text') and part.text:
+                        thoughts_text.append(part.text)
+
+                if found_image:
+                    return GenResult(
+                        image=found_image,
+                        thoughts="\n".join(thoughts_text)
                     )
 
-                    if not response.candidates:
-                        block_reason = "Unknown Block"
-                        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                            block_reason = str(response.prompt_feedback.block_reason)
-                        raise APIError(APIErrorType.SAFETY_BLOCK, f"请求被拦截: {block_reason}")
+                all_text = "".join(thoughts_text)
+                if all_text:
+                    raise APIError(APIErrorType.UNKNOWN, f"API 仅回复了文本 (Thinking?): {all_text}")
 
-                    candidate = response.candidates[0]
+                raise APIError(APIErrorType.UNKNOWN, "未收到有效的图片数据")
 
-                    if hasattr(candidate, 'finish_reason') and candidate.finish_reason:
-                        reason = candidate.finish_reason.name
-                        if reason in ['PROHIBITED_CONTENT', 'IMAGE_SAFETY', 'SAFETY']:
-                            raise APIError(APIErrorType.SAFETY_BLOCK, f"内容安全拦截 ({reason})")
-                        elif reason not in ['STOP', 'MAX_TOKENS']:
-                            raise APIError(APIErrorType.SERVER_ERROR, f"生成异常中断: {reason}")
+            except APIError:
+                raise
+            except Exception as e:
+                last_exception = e
+                error_obj, is_retryable = self._analyze_exception(e)
 
-                    found_image = None
-                    thoughts_text = []
-
-                    for part in candidate.content.parts:
-                        if hasattr(part, 'inline_data') and part.inline_data:
-                            found_image = part.inline_data.data
-
-                        elif hasattr(part, 'thought') and part.thought: 
-                            if hasattr(part, 'text') and part.text:
-                                thoughts_text.append(part.text)
-                        elif hasattr(part, 'text') and part.text:
-                            thoughts_text.append(part.text)
-
-                    if found_image:
-                        return GenResult(
-                            image=found_image,
-                            thoughts="\n".join(thoughts_text)
-                        )
-
-                    all_text = "".join(thoughts_text)
-                    if all_text:
-                        raise APIError(APIErrorType.UNKNOWN, f"API 仅回复了文本 (Thinking?): {all_text}")
-
-                    raise APIError(APIErrorType.UNKNOWN, "未收到有效的图片数据")
-
-                except APIError:
-                    raise
-                except Exception as e:
-                    last_exception = e
-                    error_obj, is_retryable = self._analyze_exception(e)
-
-                    if is_retryable and i < sdk_retries:
-                        logger.warning(f"Google SDK 网络抖动 (重试 {i+1}): {str(e)[:100]}")
-                        await asyncio.sleep(1)
-                        continue
-                    else:
-                        raise error_obj
+                if is_retryable and i < sdk_retries:
+                    logger.warning(f"Google SDK 网络抖动 (重试 {i+1}): {str(e)[:100]}")
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    raise error_obj
 
         if last_exception:
             error_obj, _ = self._analyze_exception(last_exception)
