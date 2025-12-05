@@ -5,9 +5,11 @@ import io
 from pathlib import Path
 from typing import List, Optional, Union
 from PIL import Image as PILImage
-from astrbot import logger
+from astrbot.api import logger
 from astrbot.core.message.components import At, Image, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+
+PILImage.MAX_IMAGE_PIXELS = 100000000
 
 
 class ImageUtils:
@@ -47,10 +49,10 @@ class ImageUtils:
         avatar_url = f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
         return await cls.download_image(avatar_url, proxy=proxy)
 
+    @staticmethod
     def _process_image_sync(
         raw: bytes, ensure_white_bg: bool = False, max_size: int = 2048
     ) -> bytes:
-        PILImage.MAX_IMAGE_PIXELS = 100000000  # 限制大图
         img_io = io.BytesIO(raw)
         try:
             with PILImage.open(img_io) as img:

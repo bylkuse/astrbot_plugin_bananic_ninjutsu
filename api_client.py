@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import io
-import logging
 import re
 import json
 import time
@@ -11,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 from PIL import Image as PILImage
+from astrbot.api import logger
 from google import genai
 from google.genai.types import (
     GenerateContentConfig,
@@ -25,8 +25,6 @@ except ImportError:
     ThinkingConfig = None
 
 from .core.images import ImageUtils
-
-logger = logging.getLogger("astrbot")
 
 
 class APIErrorType(Enum):

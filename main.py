@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple
-from astrbot import logger
+from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core import AstrBotConfig
@@ -17,13 +17,6 @@ from .utils.parser import CommandParser, ParsedCommand
 from .utils.views import ResponsePresenter
 
 
-@register(
-    "astrbot_plugin_bananic_ninjutsu",
-    "LilDawn",
-    "适配napcat的Astrbot插件，用于🍌（nano banana），先进的变量&参数系统",
-    "0.0.6",
-    "https://github.com/bylkuse/astrbot_plugin_bananic_ninjutsu",
-)
 class Ninjutsu(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)

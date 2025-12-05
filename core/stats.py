@@ -3,14 +3,12 @@ import asyncio
 import json
 import time
 import random
-import logging
+from astrbot.api import logger
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-logger = logging.getLogger("astrbot")
 
 
 @dataclass
