@@ -510,39 +510,42 @@ class APIClient:
         return await ImageUtils.compress_image(raw_image_bytes)
 
     def _extract_image_url_from_response(self, data: Dict[str, Any]) -> str | None:
-        try:
+        """结构化解析响应"""
+        # Image Generation
+        if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
             item = data["data"][0]
             if "url" in item:
                 return item["url"]
             if "b64_json" in item:
                 return f"data:image/png;base64,{item['b64_json']}"
-        except (KeyError, IndexError, TypeError):
-            pass
 
-        try:
-            return data["choices"][0]["message"]["images"][0]["image_url"]["url"]
-        except (KeyError, IndexError, TypeError):
-            pass
+        # Chat Completion
+        if (
+            "choices" in data
+            and isinstance(data["choices"], list)
+            and len(data["choices"]) > 0
+        ):
+            message = data["choices"][0].get("message", {})
 
-        try:
-            return data["choices"][0]["message"]["images"][0]["url"]
-        except (KeyError, IndexError, TypeError):
-            pass
+            # 中转/本地API
+            if "images" in message and isinstance(message["images"], list) and message["images"]:
+                img_obj = message["images"][0]
+                if isinstance(img_obj, dict):
+                    return img_obj.get("image_url", {}).get("url") or img_obj.get("url")
+                if isinstance(img_obj, str):
+                    return img_obj
 
-        try:
-            content = data["choices"][0]["message"]["content"]
+            # content解析
+            content = message.get("content", "")
+            if content and isinstance(content, str):
+                # Markdown 图片语法
+                md_match = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', content)
+                if md_match:
+                    return md_match.group(1).strip()
 
-            if "![image](" in content:
-                start = content.find("![image](") + 9
-                end = content.find(")", start)
-                if end > start:
-                    return content[start:end]
-
-            match = re.search(r'https?://[^\s<>")\]]+', content)
-            if match:
-                return match.group(0).rstrip(")>,'\"")
-
-        except (KeyError, IndexError, TypeError):
-            pass
+                # URL
+                url_match = re.search(r'(https?://[^\s<>"\'\)]+)', content)
+                if url_match:
+                    return url_match.group(1).strip()
 
         return None
