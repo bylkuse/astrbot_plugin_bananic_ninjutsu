@@ -1,3 +1,4 @@
+import copy
 import asyncio
 import time
 import random
@@ -6,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from ..utils.serializer import ConfigSerializer
 
@@ -38,7 +39,7 @@ class DashboardData:
     leaderboard_date: str
     top_users: List[Tuple[str, int]]
     top_groups: List[Tuple[str, int]]
-    checkin_result: Optional[CheckInResult] = None
+    checkin_result: CheckInResult | None = None
 
 
 class StatsManager:
@@ -58,7 +59,7 @@ class StatsManager:
         self._rate_limit_lock = asyncio.Lock()
 
         self._dirty_flags: set[str] = set()
-        self._auto_save_task: Optional[asyncio.Task] = None
+        self._auto_save_task: asyncio.Task | None = None
         self._save_interval = 30
 
     # --- 数据 ---
@@ -129,27 +130,28 @@ class StatsManager:
         if not self._dirty_flags:
             return
 
-        pending_saves = list(self._dirty_flags)
+        data_user = self.user_counts.copy() if "user_counts" in self._dirty_flags else None
+        data_group = self.group_counts.copy() if "group_counts" in self._dirty_flags else None
+        data_checkin = self.user_checkin_data.copy() if "checkin" in self._dirty_flags else None
 
-        try:
-            if "user_counts" in pending_saves:
-                await self._save_json(self.user_counts_file, self.user_counts)
-                self._dirty_flags.discard("user_counts")
+        data_daily = None
+        if "daily" in self._dirty_flags:
+            data_daily = copy.deepcopy(self.daily_stats)
 
-            if "group_counts" in pending_saves:
-                await self._save_json(self.group_counts_file, self.group_counts)
-                self._dirty_flags.discard("group_counts")
+        async def save_safe(flag_name: str, file_path: Path, data_snapshot: Any):
+            if data_snapshot is None:
+                return
+            try:
+                await self._save_json(file_path, data_snapshot)
 
-            if "checkin" in pending_saves:
-                await self._save_json(self.user_checkin_file, self.user_checkin_data)
-                self._dirty_flags.discard("checkin")
+                self._dirty_flags.discard(flag_name)
+            except Exception as e:
+                logger.error(f"StatsManager保存失败 [{flag_name}]: {e}")
 
-            if "daily" in pending_saves:
-                await self._save_json(self.daily_stats_file, self.daily_stats)
-                self._dirty_flags.discard("daily")
-
-        except Exception as e:
-            logger.error(f"数据回写失败: {e}")
+        await save_safe("user_counts", self.user_counts_file, data_user)
+        await save_safe("group_counts", self.group_counts_file, data_group)
+        await save_safe("checkin", self.user_checkin_file, data_checkin)
+        await save_safe("daily", self.daily_stats_file, data_daily)
 
     async def _load_json(self, file_path: Path, default: Any) -> Any:
         return await asyncio.to_thread(
@@ -198,7 +200,7 @@ class StatsManager:
     async def transaction(
         self,
         user_id: str,
-        group_id: Optional[str],
+        group_id: str | None,
         config: Dict[str, Any],
         is_admin: bool = False,
     ):
@@ -324,7 +326,7 @@ class StatsManager:
             return await self.modify_user_count(target_id, count)
 
     async def get_dashboard_with_checkin(
-        self, user_id: str, group_id: Optional[str], config: Dict[str, Any]
+        self, user_id: str, group_id: str | None, config: Dict[str, Any]
     ) -> DashboardData:
         checkin_res = await self._try_daily_checkin(user_id, config)
 
@@ -370,7 +372,7 @@ class StatsManager:
 
         return CheckInResult(True, reward, f"🎉 签到成功！获得 {reward} 次。")
 
-    async def _record_usage_internal(self, user_id: str, group_id: Optional[str]):
+    async def _record_usage_internal(self, user_id: str, group_id: str | None):
         today = datetime.now().strftime("%Y-%m-%d")
         if self.daily_stats.get("date") != today:
             self.daily_stats = {"date": today, "users": {}, "groups": {}}

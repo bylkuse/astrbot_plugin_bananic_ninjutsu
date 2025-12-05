@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List, Callable, Optional, Union
+from typing import Any, Dict, List
 from ..api_client import APIError, APIErrorType
 from ..utils.serializer import ConfigSerializer
 
@@ -84,8 +84,8 @@ class ResponsePresenter:
     def generation_success(
         elapsed: float,
         preset_name: str,
-        enhancer_model: str = None,
-        enhancer_preset: str = None,
+        enhancer_model: str | None = None,
+        enhancer_preset: str | None = None,
     ) -> str:
         parts = [f"✅ 生成成功 ({elapsed:.2f}s)", f"连接: {preset_name}"]
         if enhancer_model:

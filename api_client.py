@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 import aiohttp
 from PIL import Image as PILImage
@@ -39,13 +39,9 @@ class APIErrorType(Enum):
 
 
 class APIError(Exception):
-    def __init__(
-        self,
-        error_type: APIErrorType,
-        raw_message: str,
-        status_code: Optional[int] = None,
-        data: Optional[Dict[str, Any]] = None,
-    ):
+    def __init__(self, error_type: APIErrorType, raw_message: str, 
+             status_code: int | None = None, 
+             data: Dict[str, Any] | None = None):
         self.error_type = error_type
         self.raw_message = raw_message
         self.status_code = status_code
@@ -65,10 +61,10 @@ class ApiRequestConfig:
     image_size: str = "1K"
     aspect_ratio: str = "default"
     enable_search: bool = False
-    proxy_url: Optional[str] = None
+    proxy_url: str | None = None
     debug_mode: bool = False
-    enhancer_model_name: Optional[str] = None
-    enhancer_preset: Optional[str] = None
+    enhancer_model_name: str | None = None
+    enhancer_preset: str | None = None
     thinking: bool = False
 
 
@@ -128,12 +124,13 @@ class APIClient:
         self._session_lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
-    if self._session is None or self._session.closed:
-        async with self._session_lock:
-            if self._session is None or self._session.closed:
-                connector = aiohttp.TCPConnector(limit=100, ssl=False)
-                self._session = aiohttp.ClientSession(connector=connector)
-    return self._session
+        if self._session is None or self._session.closed:
+            async with self._session_lock:
+                if self._session is None or self._session.closed:
+                    connector = aiohttp.TCPConnector(limit=100)
+                    self._session = aiohttp.ClientSession(connector=connector)
+
+        return self._session
 
     async def terminate(self):
         if self._session and not self._session.closed:
@@ -148,11 +145,11 @@ class APIClient:
 
         async with self._key_lock:
             now = time.time()
+
             expired_keys = [k for k, t in self._cooldown_keys.items() if t <= now]
             for k in expired_keys:
                 del self._cooldown_keys[k]
 
-            start_index = self._key_index
             available_key = None
 
             for _ in range(len(keys)):
@@ -166,9 +163,20 @@ class APIClient:
             if available_key:
                 return available_key
 
-            logger.warning("所有 API Key 均在冷却中，强制使用当前轮询 Key。")
-            fallback_index = (self._key_index - 1 + len(keys)) % len(keys)
-            return keys[fallback_index]
+            active_cooldowns = [t for k, t in self._cooldown_keys.items() if k in keys]
+
+            wait_time = 60
+            if active_cooldowns:
+                earliest_release = min(active_cooldowns)
+                wait_time = int(earliest_release - now)
+                wait_time = max(1, wait_time)
+
+            logger.warning(f"所有 {len(keys)} 个 API Key 均在冷却中，请求被阻断。")
+
+            raise APIError(
+                APIErrorType.QUOTA_EXHAUSTED, 
+                f"所有 API Key 均在冷却/限流中，请等待约 {wait_time} 秒后再试。"
+            )
 
     def _mark_key_failed(self, key: str, duration: int = 60):
         expire_time = time.time() + duration

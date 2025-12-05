@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Any, Dict
+from typing import List, Any, Dict
 from astrbot.api import logger
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -39,8 +39,8 @@ class GenerationService:
         params: dict,
         images: List[bytes],
         is_master: bool,
-        enhancer_model_name: Optional[str] = None,
-        enhancer_preset: Optional[str] = None,
+        enhancer_model_name: str | None = None,
+        enhancer_preset: str | None = None,
     ):
         """调用&返回"""
         sender_id = event.get_sender_id()

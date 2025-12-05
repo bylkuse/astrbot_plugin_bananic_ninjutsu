@@ -1,6 +1,6 @@
 import shlex
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any
 from astrbot.core.message.components import At, Plain, Image
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
@@ -9,7 +9,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 class ParsedCommand:
     text: str
     params: Dict[str, Any] = field(default_factory=dict)
-    first_at: Optional[At] = None
+    first_at: At | None = None
     all_ats: List[At] = field(default_factory=list)
     images: List[str] = field(default_factory=list)
 
@@ -34,7 +34,7 @@ class CommandParser:
     BOOLEAN_VALUE_KEYS = {"thinking"}
 
     @classmethod
-    def extract_pure_command(cls, text: str, prefixes: List[str]) -> Optional[str]:
+    def extract_pure_command(cls, text: str, prefixes: List[str]) -> str | None:
         if not text:
             return None
 
@@ -54,7 +54,7 @@ class CommandParser:
         return first_token
 
     @classmethod
-    def _tokenize(cls, event: AstrMessageEvent) -> List[Union[str, At]]:
+    def _tokenize(cls, event: AstrMessageEvent) -> List[str | At]:
         tokens = []
         if not hasattr(event.message_obj, "message"):
             return tokens
@@ -113,7 +113,7 @@ class CommandParser:
             
             if cmd_aliases:
                 if text_no_prefix.lower() in [a.lower() for a in cmd_aliases]:
-                     tokens.pop(0)
+                    tokens.pop(0)
 
         params = {}
         final_text_parts = []

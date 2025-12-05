@@ -1,14 +1,14 @@
 import os
 import json
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from astrbot.api import logger
 
 class ConfigSerializer:
     """序列化，兼容性妥协"""
 
     @staticmethod
-    def parse_single_kv(text: str, separator: str = ":") -> Optional[tuple[str, str]]:
+    def parse_single_kv(text: str, separator: str = ":") -> tuple[str, str] | None:
         if separator in text:
             k, v = text.split(separator, 1)
             k, v = k.strip(), v.strip()

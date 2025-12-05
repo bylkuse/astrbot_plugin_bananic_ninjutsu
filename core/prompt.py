@@ -4,7 +4,7 @@ import string
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Literal
+from typing import Any, Dict, Tuple, Literal
 
 from astrbot.api import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -65,7 +65,7 @@ class PromptManager:
             f"PromptManager: 已加载 {len(self.prompt_map)} 个生图预设, {len(self.optimizer_presets)} 个优化预设"
         )
 
-    def get_preset(self, key: str) -> Optional[str]:
+    def get_preset(self, key: str) -> str | None:
         return self.prompt_map.get(key)
 
     def get_target_dict(self, p_type: Literal["prompt", "optimizer"]) -> Dict[str, str]:
@@ -79,9 +79,7 @@ class PromptManager:
 
         return text.rstrip(symbols_to_strip)
 
-    def check_duplicate(
-        self, p_type: Literal["prompt", "optimizer"], new_value: str
-    ) -> Optional[str]:
+    def check_duplicate(self, p_type: Literal["prompt", "optimizer"], new_value: str) -> str | None:
         target_dict = self.get_target_dict(p_type)
         new_val_norm = self.normalize_for_comparison(new_value)
 
@@ -90,9 +88,7 @@ class PromptManager:
                 return key
         return None
 
-    async def process_variables(
-        self, prompt: str, params: dict, event: Optional[AstrMessageEvent] = None
-    ) -> str:
+    async def process_variables(self, prompt: str, params: dict, event: AstrMessageEvent | None = None) -> str:
         # 防ReDoS
         if len(prompt) > 4096:
             return prompt
@@ -260,7 +256,7 @@ class PromptManager:
         original_prompt: str,
         event: AstrMessageEvent,
         up_value: Any = "default",
-    ) -> Tuple[str, Optional[str]]:
+    ) -> Tuple[str, str | None, str | None]:
         instruction_key = str(up_value) if up_value is not True else "default"
         used_preset_name = None
 

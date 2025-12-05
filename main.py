@@ -1,5 +1,5 @@
 from functools import wraps
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools
@@ -48,7 +48,7 @@ class Ninjutsu(Star):
         self.config_mgr = ConfigManager(self.conf, self.pm, self.context)
 
         self.connection_presets: Dict[str, Any] = {}
-        self.generation_service: Optional[GenerationService] = None
+        self.generation_service: GenerationService | None = None
 
     async def initialize(self):
         await self.stats.load_all_data()
@@ -99,7 +99,7 @@ class Ninjutsu(Star):
 
     def _resolve_admin_cmd(
         self, event: AstrMessageEvent, parsed: ParsedCommand
-    ) -> Tuple[Optional[str], Optional[int], bool]:
+    ) -> Tuple[str | None, int | None, bool]:
         target_id = str(parsed.first_at.qq) if parsed.first_at else None
         numbers = [int(x) for x in parsed.text.split() if x.lstrip("-").isdigit()]
 

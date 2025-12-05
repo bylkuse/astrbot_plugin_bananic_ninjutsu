@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional, Callable, Awaitable
+from typing import Any, Dict, List, Callable, Awaitable
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
 from astrbot.api.star import Context
@@ -99,15 +99,11 @@ class ConfigManager:
         cmd_list: List[str],
         target_dict: Dict,
         item_name: str,
-        after_delete_callback: Optional[Callable[[str], Awaitable[None]]] = None,
-        extra_cmd_handler: Optional[
-            Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]
-        ] = None,
-        duplicate_check_type: Optional[str] = None,
-        custom_update_handler: Optional[
-            Callable[[AstrMessageEvent, str, List[str]], Awaitable[bool]]
-        ] = None,
-        custom_display_handler: Optional[Callable[[str, Any], str]] = None,
+        after_delete_callback: Callable[[str], Awaitable[None]] | None = None,
+        extra_cmd_handler: Callable[[AstrMessageEvent, List[str]], Awaitable[Any]] | None = None,
+        duplicate_check_type: str | None = None,
+        custom_update_handler: Callable[[AstrMessageEvent, str, List[str]], Awaitable[bool]] | None = None,
+        custom_display_handler: Callable[[str, Any], str] | None = None,
     ):
         """增删改查"""
         is_admin = self.is_admin(event)
@@ -122,6 +118,8 @@ class ConfigManager:
         if extra_cmd_handler:
             result = await extra_cmd_handler(event, parts)
             if result:
+                if result is True:
+                    return
                 yield result
                 return
         sub = parts[0].lower() if parts else ""
