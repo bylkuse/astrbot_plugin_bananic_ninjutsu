@@ -14,46 +14,46 @@ from astrbot.core.message.components import At
 from ..utils.serializer import ConfigSerializer
 
 class PromptManager:
-    def __init__(self, data_dir: Path, config: dict):
+    def __init__(self, config: dict, data_dir: Path):
         self.config = config
+        # 图片模板(预留)
+        self.data_dir = data_dir
+        self.images_dir = self.data_dir / "preset_images"
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+
         self.prompt_map: Dict[str, str] = {}
         self.optimizer_presets: Dict[str, str] = {}
         self.color_list = ["red", "blue", "green", "yellow", "purple", "orange", "black", "white", "pink", "cyan"]
 
     def sync_to_config(self):
-        self.config["prompt_list"] = ConfigSerializer.dump_kv_list(self.prompt_map)
-        self.config["optimizer_presets"] = ConfigSerializer.dump_kv_list(self.optimizer_presets)
+        if "Generation_Config" not in self.config: self.config["Generation_Config"] = {}
+        
+        self.config["Generation_Config"]["prompt_list"] = ConfigSerializer.dump_kv_list(self.prompt_map)
+        self.config["Generation_Config"]["optimizer_presets"] = ConfigSerializer.dump_kv_list(self.optimizer_presets)
 
     async def load_prompts(self):
-        raw_list = self.config.get("prompt_list", [])
+        gen_conf = self.config.get("Generation_Config", {})
+
+        raw_list = gen_conf.get("prompt_list", [])
         self.prompt_map = ConfigSerializer.load_kv_list(raw_list)
-        
-        raw_opt_list = self.config.get("optimizer_presets", [])
+
+        raw_opt_list = gen_conf.get("optimizer_presets", [])
         self.optimizer_presets = ConfigSerializer.load_kv_list(raw_opt_list)
-    
+
         if "default" not in self.optimizer_presets:
             self.optimizer_presets["default"] = "You are a professional prompt engineer. Rewrite the user's description into a detailed prompt."
-        
+
         logger.info(f"PromptManager: 已加载 {len(self.prompt_map)} 个生图预设, {len(self.optimizer_presets)} 个优化预设")
 
     def get_preset(self, key: str) -> Optional[str]:
         return self.prompt_map.get(key)
-
-    async def save_prompts(self, save_func):
-        self.sync_to_config()
-        try:
-            await asyncio.to_thread(save_func)
-            return True
-        except Exception as e:
-            logger.error(f"保存预设失败: {e}")
-            raise e
 
     def get_target_dict(self, p_type: Literal["prompt", "optimizer"]) -> Dict[str, str]:
         return self.prompt_map if p_type == "prompt" else self.optimizer_presets
 
     def normalize_for_comparison(self, text: str) -> str:
         symbols_to_strip = string.punctuation + "，。！？；：”’（）《》【】"
-    
+
         if '%' in text:
             text = re.sub(r'%p(\d*)?(?::([^%]*))?%', lambda m: m.group(2) or '', text)
 
@@ -62,7 +62,7 @@ class PromptManager:
     def check_duplicate(self, p_type: Literal["prompt", "optimizer"], new_value: str) -> Optional[str]:
         target_dict = self.get_target_dict(p_type)
         new_val_norm = self.normalize_for_comparison(new_value)
-    
+
         for key, val in target_dict.items():
             if self.normalize_for_comparison(val) == new_val_norm:
                 return key
@@ -180,7 +180,7 @@ class PromptManager:
     async def enhance_prompt(self, context: Any, original_prompt: str, event: AstrMessageEvent, up_value: Any = "default") -> Tuple[str, Optional[str]]:
         instruction_key = str(up_value) if up_value is not True else "default"
         used_preset_name = None
-    
+
         system_instruction = ""
         user_content_template = ""
 
@@ -193,7 +193,6 @@ class PromptManager:
                 "You are a helpful AI assistant for image generation. "
                 "Your task is to modify the User's original prompt according to their specific requirements. "
                 "Maintain the core subject of the original prompt unless asked to change it. "
-                "Output ONLY the final modified prompt, no explanations."
             )
             user_content_template = (
                 "Original Prompt: {prompt}\n"
@@ -202,7 +201,9 @@ class PromptManager:
             )
             used_preset_name = "Custom"
 
-        provider_id = self.config.get("prompt_enhance_provider_id")
+        gen_conf = self.config.get("Generation_Config", {})
+
+        provider_id = gen_conf.get("prompt_enhance_provider_id")
         provider = None
         try:
             if provider_id:
@@ -219,16 +220,17 @@ class PromptManager:
 
         try:
             full_prompt = user_content_template.format(prompt=original_prompt)
-        
+            full_prompt += " Directly output the final prompt without explanation."
+
             resp = await provider.text_chat(
                 prompt=full_prompt,
                 context=[],
                 system_prompt=system_instruction,
-                model=self.config.get("prompt_enhance_model")
+                model=gen_conf.get("prompt_enhanced_model")
             )
 
             enhancer_model_name = getattr(resp.raw_completion, "model_version", None)
-        
+
             content = getattr(resp, "text", None) or getattr(resp, "content", None)
             if not content:
                 rc = getattr(resp, "result_chain", None)

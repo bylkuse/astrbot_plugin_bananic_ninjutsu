@@ -1,7 +1,6 @@
 import re
 import json
 from typing import Any, Dict, List, Callable, Optional, Union
-from astrbot.core.message.components import Image, Plain
 from ..api_client import APIError, APIErrorType
 
 class ResponsePresenter:

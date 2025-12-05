@@ -87,65 +87,42 @@ class ConfigManager:
         else:
             async for r in perform_save(): yield r
 
-    async def handle_crud_command(self, event: AstrMessageEvent, cmd_list: List[str], target_dict: Dict, item_name: str, 
+    async def handle_crud_command(self, 
+                                  event: AstrMessageEvent, 
+                                  cmd_list: List[str], 
+                                  target_dict: Dict, 
+                                  item_name: str, 
                                   after_delete_callback: Optional[Callable[[str], Awaitable[None]]] = None, 
-                                  extra_cmd_handler: Optional[Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]] = None, duplicate_check_type: Optional[str] = None):
+                                  extra_cmd_handler: Optional[Callable[[AstrMessageEvent, List[str]], Awaitable[Any]]] = None, 
+                                  duplicate_check_type: Optional[str] = None,
+                                  custom_update_handler: Optional[Callable[[AstrMessageEvent, str, List[str]], Awaitable[bool]]] = None,
+                                  custom_display_handler: Optional[Callable[[str, Any], str]] = None):
         """增删改查"""
         is_admin = self.is_admin(event) 
-
         cmd_text = self.strip_command(event.message_str.strip(), cmd_list)
         parts = cmd_text.split()
-
         cmd_display_name = f"#{cmd_list[0]}"
 
+        # 扩展
         if extra_cmd_handler:
             result = await extra_cmd_handler(event, parts)
             if result:
                 yield result
                 return
+        sub = parts[0].lower() if parts else ""
 
-        # 字典操作
-        is_handled = False
-        async for res in self._handle_standard_dict_ops(event, parts, target_dict, item_name, cmd_display_name, is_admin, after_delete_callback):
-            yield res
-            is_handled = True
-
-        if is_handled: return
-
-        # 增改
-        add_key, add_value = None, None
-        if parsed := ConfigSerializer.parse_single_kv(cmd_text):
-            add_key, add_value = parsed
-            if duplicate_check_type and isinstance(add_value, str):
-                dup_key = self.pm.check_duplicate(duplicate_check_type, add_value)
-                if dup_key and dup_key != add_key:
-                    yield event.plain_result(ResponsePresenter.duplicate_item("内容", dup_key) + " 无需重复添加。")
-                    return
-
-            async for res in self.perform_save_with_confirm(event, target_dict, add_key, add_value, item_name):
-                yield res
-            return
-
-        if parts and not is_handled and parts[0] not in ["l", "list", "del", "ren"]:
-            yield event.plain_result(ResponsePresenter.item_not_found(item_name, parts[0]))
-
-    async def _handle_standard_dict_ops(self, event, cmd_parts, target_dict, item_name, cmd_display_name, is_admin, on_delete_callback):
-        sub = cmd_parts[0].lower() if cmd_parts else ""
-
-        if sub in ["l", "list"] or not cmd_parts:
+        if sub in ["l", "list"] or not parts:
             if not target_dict:
                 yield event.plain_result(f"✨ {item_name}列表为空。")
                 return
-
             if sub in ["l", "list"]:
                 keys_str = ", ".join(sorted(target_dict.keys()))
                 yield event.plain_result(
                     f"✨ {item_name}名录 (共{len(target_dict)}个):\n"
                     f"{keys_str}\n\n"
-                    f"💡 使用 {cmd_display_name} <名称> 查看具体内容。"
+                    f"💡 使用 {cmd_display_name} <名称> 查看详情。"
                 )
                 return
-
             msg_lines = [f"✨ {item_name}列表 (详细):"]
             for name in sorted(target_dict.keys()):
                 content = target_dict[name]
@@ -160,11 +137,11 @@ class ConfigManager:
             if not is_admin:
                 yield event.plain_result(ResponsePresenter.unauthorized_admin())
                 return
-            if len(cmd_parts) < 2:
+            if len(parts) < 2:
                 yield event.plain_result(f"格式错误: {cmd_display_name} del <名称>")
                 return
 
-            key = cmd_parts[1]
+            key = parts[1]
             if key not in target_dict:
                 yield event.plain_result(ResponsePresenter.item_not_found(item_name, key))
                 return
@@ -173,7 +150,7 @@ class ConfigManager:
                 return
 
             del target_dict[key]
-            if on_delete_callback: await on_delete_callback(key)
+            if after_delete_callback: await after_delete_callback(key)
             await self.save_config()
             yield event.plain_result(f"✅ 已删除 {item_name} [{key}]。")
             return
@@ -182,30 +159,51 @@ class ConfigManager:
             if not is_admin:
                 yield event.plain_result(ResponsePresenter.unauthorized_admin())
                 return
-            if len(cmd_parts) < 3:
+            if len(parts) < 3:
                 yield event.plain_result(f"格式错误: {cmd_display_name} ren <旧名> <新名>")
                 return
-
-            old_k, new_k = cmd_parts[1], cmd_parts[2]
+            old_k, new_k = parts[1], parts[2]
             if old_k not in target_dict:
                 yield event.plain_result(ResponsePresenter.item_not_found(item_name, old_k))
                 return
             if new_k in target_dict:
                 yield event.plain_result(ResponsePresenter.duplicate_item(item_name, new_k))
                 return
-
             if item_name == "优化预设" and old_k == "default":
                 yield event.plain_result("❌ default 预设不可重命名。")
                 return
-
             target_dict[new_k] = target_dict.pop(old_k)
             await self.save_config()
             yield event.plain_result(f"✅ 已重命名: [{old_k}] -> [{new_k}]。")
             return
 
-        if len(cmd_parts) == 1:
-            key = cmd_parts[0]
-            if key in target_dict:
-                content = target_dict[key]
-                yield event.plain_result(ResponsePresenter.format_preset_detail(item_name, key, content))
+        # 查看&更新项
+        target_key = parts[0]
+        if target_key in target_dict:
+            if len(parts) == 1:
+                content = target_dict[target_key]
+                if custom_display_handler:
+                    msg = custom_display_handler(target_key, content)
+                else:
+                    msg = ResponsePresenter.format_preset_detail(item_name, target_key, content)
+                yield event.plain_result(msg)
                 return
+            if custom_update_handler:
+                if await custom_update_handler(event, target_key, parts[1:]):
+                    return 
+
+        # 增改
+        if parsed := ConfigSerializer.parse_single_kv(cmd_text):
+            add_key, add_value = parsed
+
+            if duplicate_check_type and isinstance(add_value, str):
+                dup_key = self.pm.check_duplicate(duplicate_check_type, add_value)
+                if dup_key and dup_key != add_key:
+                    yield event.plain_result(ResponsePresenter.duplicate_item("内容于", dup_key) + " 无需重复添加。")
+                    return
+
+            async for res in self.perform_save_with_confirm(event, target_dict, add_key, add_value, item_name):
+                yield res
+            return
+
+        yield event.plain_result(ResponsePresenter.item_not_found(item_name, target_key))

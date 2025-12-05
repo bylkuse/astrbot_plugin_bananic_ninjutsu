@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
+from astrbot import logger
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
@@ -10,15 +11,16 @@ from ..core.images import ImageUtils
 from ..utils.views import ResponsePresenter
 
 class GenerationService:
-    def __init__(self, api_client: APIClient, stats_manager: StatsManager, prompt_manager: PromptManager, config: Any):
+    def __init__(self, api_client: APIClient, stats_manager: StatsManager, prompt_manager: PromptManager, config: Any, active_preset: Dict[str, Any]):
         self.api_client = api_client
         self.stats = stats_manager
         self.pm = prompt_manager
         self.conf = config
-        self.current_preset_name = "GoogleDefault"
+        self.conn_config = active_preset
     
-    def set_current_preset_name(self, name: str):
-        self.current_preset_name = name
+    def set_active_preset(self, preset_data: Dict[str, Any]):
+        self.conn_config = preset_data
+        logger.info(f"GenerationService: 切换连接至 [{self.conn_config.get('name')}]")
 
     async def _execute_core_generation(self, event: AstrMessageEvent, prompt: str, 
                                  params: dict, images: List[bytes], 
@@ -38,7 +40,14 @@ class GenerationService:
             yield event.plain_result(ResponsePresenter.generating(display_prompt))
 
             start_time = datetime.now()
-            debug_mode = self.conf.get("debug_prompt", False)
+
+            basic_conf = self.conf.get("Basic_Config", {})
+            debug_mode = basic_conf.get("debug_prompt", False)
+
+            conn_conf = self.conf.get("Connection_Config", {})
+            default_timeout = conn_conf.get("timeout", 300)
+            use_proxy = conn_conf.get("use_proxy", False)
+            proxy_url = conn_conf.get("proxy_url")
 
             raw_thinking = params.get("thinking", False)
             thinking_val = False
@@ -48,18 +57,18 @@ class GenerationService:
                 thinking_val = bool(raw_thinking)
 
             request_config = ApiRequestConfig(
-                api_keys=self.conf.get("api_keys", []),
-                api_type=self.conf.get("api_type", "google"),
-                api_base=self.conf.get("api_url", "https://generativelanguage.googleapis.com"),
-                model=self.conf.get("model", "gemini-3-pro-image-preview"),
+                api_keys=self.conn_config.get("api_keys", []),
+                api_type=self.conn_config.get("api_type", "google"),
+                api_base=self.conn_config.get("api_url", "https://generativelanguage.googleapis.com"),
+                model=self.conn_config.get("model", "gemini-3-pro-image-preview"),
+                timeout=int(params.get("timeout", default_timeout)),
+                proxy_url=proxy_url if use_proxy else None,
+                debug_mode=debug_mode,
                 prompt=prompt,
                 image_bytes_list=images,
-                timeout=int(params.get("timeout", self.conf.get("timeout", 300))),
                 image_size=params.get("image_size", "1K"),
                 aspect_ratio=params.get("aspect_ratio", "default"),
                 enable_search=bool(params.get("google_search", False)),
-                proxy_url=self.conf.get("proxy_url") if self.conf.get("use_proxy") else None,
-                debug_mode=debug_mode,
                 enhancer_model_name=enhancer_model_name,
                 enhancer_preset=enhancer_preset,
                 thinking=thinking_val
@@ -72,12 +81,13 @@ class GenerationService:
                 thoughts = gen_result.thoughts
 
                 elapsed = (datetime.now() - start_time).total_seconds()
-                caption = ResponsePresenter.generation_success(elapsed, self.current_preset_name, enhancer_model_name, enhancer_preset)
-                
+                current_preset_name = self.conn_config.get("name", "Unknown")
+                caption = ResponsePresenter.generation_success(elapsed, current_preset_name, enhancer_model_name, enhancer_preset)
+
                 result_chain = []
                 if thoughts:
                     result_chain.append(Plain(f"🧐 思考过程:\n{thoughts}\n\n"))
-                
+
                 result_chain.append(Image.fromBytes(image_data))
                 result_chain.append(Plain(caption))
 
@@ -145,7 +155,9 @@ class GenerationService:
 
         images_to_process = []
         if require_image:
-            proxy = self.conf.get("proxy_url") if self.conf.get("use_proxy") else None
+            conn_conf = self.conf.get("Connection_Config", {})
+            proxy = conn_conf.get("proxy_url") if conn_conf.get("use_proxy") else None
+
             img_bytes_list = await ImageUtils.get_images_from_event(event, proxy=proxy)
             if not img_bytes_list:
                 yield event.plain_result("❌ 请发送图片、引用图片，或直接在图片下配文。")

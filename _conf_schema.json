@@ -1,184 +1,223 @@
 {
-	"api_type": {
-        "description": "API类型",
-        "type": "string",
-        "hint": "选择使用的API类型",
-        "default": "Google",
-        "options": [
-            "google",
-            "openai"
-        ]
-    },
-    "api_url": {
-        "description": "API的URL地址",
-        "type": "string",
-        "hint": "图生图和文生图功能均使用此URL。默认为 https://api.bltcy.ai/v1/chat/completions",
-        "default": "https://api.bltcy.ai/v1/chat/completions"
-    },
-    "model": {
-        "description": "默认模型名称",
-        "type": "string",
-        "hint": "图生图和文生图功能均使用此模型。默认为 gemini-2.5-flash-image-preview",
-        "default": "gemini-2.5-flash-image-preview"
-    },
-    "api_keys": {
-        "description": "API 密钥列表",
-        "type": "list",
-        "hint": "可以填写多个密钥，插件会自动轮换使用。使用 #lm 添加key 命令进行管理。",
-        "items": {
-            "type": "string",
-            "description": "API 密钥"
-        },
-        "default": []
-    },
-    "prefix": {
-        "description": "是否要求指令必须带前缀",
+  "Basic_Config": {
+    "description": "基础设置",
+    "type": "object",
+    "hint": "插件的基础触发与指令配置",
+    "items": {
+      "prefix": {
+        "description": "指令前缀校验",
         "type": "bool",
-        "hint": "推荐开启。开启后，指令需要前缀（如 '#'）或 @机器人 才能触发，可避免日常聊天误触。",
+        "hint": "开启后，指令必须以 '#' 或 @机器人 开头才能触发，有效防止日常聊天误触。",
         "default": true
-    },
-    "extra_prefix": {
-        "description": "自定义提示词模式的前缀",
-        "hint": "用于触发自定义prompt，例如设置为 'bnn'，则使用 'bnn <你的prompt>' 来调用",
+      },
+      "extra_prefix": {
+        "description": "自定义生图前缀",
+        "hint": "用于触发自定义Prompt模式。例如设置为 'bnn'，则用户发送 'bnn <描述>' 即可直接调用。",
         "type": "string",
         "default": "bnn"
-    },
-    "prompt_enhance_provider_id": {
-        "description": "提示词优化供应商（留空=使用当前会话默认）",
+      },
+      "debug_prompt": {
+        "description": "调试模式",
+        "type": "bool",
+        "hint": "开启后仅输出构建好的最终提示词，不进行实际生图请求，用于排查问题。",
+        "default": false
+      }
+    }
+  },
+  "Connection_Config": {
+    "description": "连接与网络",
+    "type": "object",
+    "hint": "配置绘图API的连接方式、代理及超时设置",
+    "items": {
+      "current_preset_name": {
+        "description": "当前使用的连接预设",
+        "type": "string",
+        "hint": "填写下方【连接预设列表】中已存在的 name 字段值。",
+        "default": "GoogleDefault"
+      },
+      "connection_presets": {
+        "description": "连接预设列表",
+        "type": "list",
+        "hint": "存储API配置信息。建议使用 #lmc 指令进行添加或切换，直接修改此处需保证JSON格式正确。",
+        "items": {
+          "type": "string",
+          "description": "预设配置JSON"
+        },
+        "default": [
+          "{\"name\": \"GoogleDefault\", \"api_type\": \"google\", \"api_url\": \"https://generativelanguage.googleapis.com\", \"model\": \"gemini-2.5-flash-image-preview\", \"api_keys\": []}",
+          "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://api.openai.com/v1/chat/completions\", \"model\": \"gpt-4o\", \"api_keys\": []}"
+        ]
+      },
+      "timeout": {
+        "description": "请求超时时间(秒)",
+        "type": "int",
+        "hint": "API请求的最大等待时间。复杂生图模型建议设置在 120秒 以上。",
+        "default": 300
+      },
+      "use_proxy": {
+        "description": "启用网络代理",
+        "type": "bool",
+        "hint": "如果服务器无法直接访问国外API，请开启此项。",
+        "default": false
+      },
+      "proxy_url": {
+        "description": "代理服务器地址",
+        "type": "string",
+        "hint": "格式示例: http://127.0.0.1:7890 或 http://user:pass@host:port",
+        "default": ""
+      }
+    }
+  },
+  "Generation_Config": {
+    "description": "生图与优化",
+    "type": "object",
+    "hint": "管理生图触发词、提示词优化模型及预设",
+    "items": {
+      "prompt_list": {
+        "description": "触发词映射列表",
+        "hint": "格式为 '触发词:提示词'。建议使用 #lm添加 指令动态管理。",
+        "type": "list",
+        "default": [
+          "生日:生成一张庆祝生日的图片，今天是%bd%，是名叫%un%的%age%岁生日"
+        ]
+      },
+      "prompt_enhance_provider_id": {
+        "description": "提示词优化模型供应商",
         "type": "string",
         "_special": "select_provider",
         "default": "",
-        "obvious_hint": true
-    },
-    "prompt_enhanced_model": {
-        "description": "可选：强制指定提示词优化模型名（不填用提供商默认）",
+        "obvious_hint": true,
+        "hint": "选择一个LLM用于扩写和优化用户的简单提示词。留空则使用当前会话默认模型。"
+      },
+      "prompt_enhanced_model": {
+        "description": "指定优化模型名称",
         "type": "string",
+        "hint": "可选。强制指定上述供应商的具体模型名（不填则使用该供应商的默认模型）。",
         "default": ""
-    },
-    "optimizer_presets": {
-        "description": "提示词优化预设",
-        "hint": "用于 --up 参数。格式为 预设名:SystemPrompt。使用 #lm优化 进行管理。",
+      },
+      "optimizer_presets": {
+        "description": "优化系统预设",
+        "hint": "用于 --up 参数。格式为 '预设名:SystemPrompt'。建议使用 #lm优化 指令管理。",
         "type": "list",
         "items": {
-            "type": "string",
-            "description": "预设名:Prompt"
+          "type": "string",
+          "description": "预设名:Prompt"
         },
         "default": [
-            "default:You are a professional prompt engineer for AI image generation. Rewrite the user's description into a detailed, high-quality prompt in English. Add details about lighting, composition, texture, and style. Keep it concise but descriptive. Directly output the final prompt without explanation."
+          "default:You are a professional prompt engineer. Rewrite the user's description into a detailed, high-quality prompt. Add details about lighting, composition, texture, and style.",
+          "动漫:Rewrite the following prompt into a high-quality prompt for Anime style AI generation.",
+          "审查:You are a safety filter and prompt refiner. The user is asking for an artistic image generation, but the prompt might contain keywords that trigger safety blockers (NSFW/Violence). Please rewrite the prompt to describe the same visual outcome using safe, artistic, and objective anatomical or descriptive terms. Retain the artistic intent but remove explicit NSFW vocabulary.",
+          "真实:Rewrite the following prompt into a high-quality prompt for realistic style AI generation."
         ]
-    },
-    "use_proxy": {
-        "description": "是否启用网络代理",
-        "type": "bool",
-        "hint": "如果你的服务器无法直接访问 API 地址，请开启此项",
-        "default": false
-    },
-    "proxy_url": {
-        "description": "网络代理地址",
-        "type": "string",
-        "hint": "格式为 http://user:pass@host:port, 例如 http://127.0.0.1:7890",
-        "default": ""
-    },
-	"timeout": {
-        "description": "超时时间",
-        "type": "int",
-        "hint": "单位：秒，对所有请求有效。大部分正常响应当在90秒内完成（包括4K），尽管超过10分钟仍然有可能出图，但是失败率会很高，不如尽早重试。",
-        "default": "300"
-    },
-    "user_whitelist": {
-        "description": "【权限】用户白名单",
-        "type": "list",
-        "hint": "留空则对所有用户开放。填写后，只有在此列表中的用户才能使用本插件功能（管理员除外）。",
-        "items": { "type": "string", "description": "用户QQ号" },
-        "default": []
-    },
-    "user_blacklist": {
-        "description": "【权限】用户黑名单",
-        "type": "list",
-        "hint": "黑名单优先级最高。在此列表中的用户将无法使用本插件功能（管理员除外）。",
-        "items": { "type": "string", "description": "用户QQ号" },
-        "default": []
-    },
-    "group_whitelist": {
-        "description": "【权限】群聊白名单",
-        "type": "list",
-        "hint": "留空则在所有群聊中可用。填写后，只有在此列表中的群聊才能使用本插件功能。",
-        "items": { "type": "string", "description": "群号" },
-        "default": []
-    },
-    "group_blacklist": {
-        "description": "【权限】群聊黑名单",
-        "type": "list",
-        "hint": "黑名单优先级最高。在此列表中的群聊将无法使用本插件功能。",
-        "items": { "type": "string", "description": "群号" },
-        "default": []
-    },
-    "enable_user_limit": {
-        "description": "【次数限制】是否启用【用户】次数限制",
-        "type": "bool",
-        "hint": "开启后，将根据用户的QQ号独立计算和限制使用次数。",
-        "default": true
-    },
-    "enable_group_limit": {
-        "description": "【次数限制】是否启用【群组】次数限制",
-        "type": "bool",
-        "hint": "开启后，将根据群号计算和限制群内总的使用次数。",
-        "default": false
-    },
-    "enable_checkin": {
-        "description": "【签到系统】是否开启每日签到功能",
-        "type": "bool",
-        "hint": "开启后，用户可使用 #lm签到 命令获取个人次数。",
-        "default": false
-    },
-    "checkin_fixed_reward": {
-        "description": "【签到系统】固定签到奖励次数",
-        "type": "int",
-        "hint": "当“随机签到奖励”关闭时，用户每次签到获得的固定次数。",
-        "default": 3
-    },
-    "enable_random_checkin": {
-        "description": "【签到系统】是否开启随机签到奖励",
-        "type": "bool",
-        "hint": "开启后，签到奖励为1到设置的最大值之间的随机数。关闭则使用下方的固定奖励值。",
-        "default": false
-    },
-    "checkin_random_reward_max": {
-        "description": "【签到系统】随机签到奖励最大值",
-        "type": "int",
-        "hint": "当“随机签到奖励”开启时，用户签到可获得的最高次数（最低为1）。",
-        "default": 5
-    },
-    "prompt_list": {
-        "description": "生图触发词与提示词",
-        "hint": "格式为 触发词:提示词。使用 #lm添加 <触发词>:<提示词> 来动态管理。",
-        "type": "list",
-        "default": [
-            "手办化:Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character. The final image must be in a realistic style and environment.\n\n**Crucial Instruction on Face & Likeness:** The figurine's face is the most critical element. It must be a perfect, high-fidelity 3D translation of the character from the source image. The sculpt must be sharp, clean, and intricately detailed, accurately capturing the original artwork's facial structure, eye style, expression, and hair. The final result must be immediately recognizable as the same character, elevated to a premium physical product standard. Do NOT generate a generic or abstract face.\n\n**Scene Composition (Strictly follow these details):**\n1. **Figurine & Base:** Place the figure on a computer desk. It must stand on a simple, circular, transparent acrylic base WITHOUT any text or markings.\n2. **Computer Monitor:** In the background, a computer monitor must display 3D modeling software (like ZBrush or Blender) with the digital sculpt of the very same figurine visible on the screen.\n3. **Artwork Display:** Next to the computer screen, include a transparent acrylic board with a wooden base. This board holds a print of the original 2D artwork that the figurine is based on.\n4. **Environment:** The overall setting is a desk, with elements like a keyboard to enhance realism. The lighting should be natural and well-lit, as if in a room."
-        ]
-    },
-    "debug_prompt": {
-        "description": "调试模式",
-        "type": "bool",
-        "hint": "仅输出最终提示词，不进行生图。",
-        "default": false
-    },
-    "connection_presets": {
-        "description": "连接预设列表",
-        "type": "list",
-        "hint": "每个元素是一个JSON字符串，包含 name, api_type, api_url, model, api_keys。",
-        "items": {
-            "type": "string",
-            "description": "连接预设的JSON字符串"
-        },
-        "default": [
-            "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://openrouter.ai/api\", \"model\": \"openrouter/perplexity/llama-3-sonar-large-32k-online\", \"api_keys\": []}",
-            "{\"name\": \"GoogleDefault\", \"api_type\": \"google\", \"api_url\": \"https://generativelanguage.googleapis.com\", \"model\": \"gemini-2.5-flash-image-preview\", \"api_keys\": []}"
-        ]
-    },
-    "current_preset_name": {
-        "description": "当前使用的连接预设名称",
-        "type": "string",
-        "default": "GoogleDefault"
+      }
     }
+  },
+  "Permission_Config": {
+    "description": "权限与限额",
+    "type": "object",
+    "hint": "设置黑白名单及使用次数限制",
+    "items": {
+	  "enable_rate_limit": {
+        "description": "启用限流窗口",
+        "type": "bool",
+        "hint": "开启后，将限制单会话在周期内的最多请求数（默认3次/min）。",
+        "default": true
+      },
+	  "rate_limit_period": {
+        "description": "限流窗口期",
+        "type": "int",
+        "hint": "计算限流次数的每个周期的时长（秒）",
+        "default": 60
+      },
+	  "max_requests_per_group": {
+        "description": "窗口期请求上限",
+        "type": "int",
+        "hint": "每个周期内最多请求数",
+        "default": 3
+      },
+      "enable_user_limit": {
+        "description": "启用个人次数限制",
+        "type": "bool",
+        "hint": "开启后，将独立计算每个QQ号的使用次数。",
+        "default": false
+      },
+      "enable_group_limit": {
+        "description": "启用群组次数限制",
+        "type": "bool",
+        "hint": "开启后，将计算群内所有成员的总使用次数。",
+        "default": false
+      },
+      "user_whitelist": {
+        "description": "用户白名单",
+        "type": "list",
+        "hint": "【只允许】列表内的QQ号使用。留空则对所有人开放（黑名单优先级更高）。",
+        "items": {
+          "type": "string",
+          "description": "用户QQ号"
+        },
+        "default": []
+      },
+      "user_blacklist": {
+        "description": "用户黑名单",
+        "type": "list",
+        "hint": "【禁止】列表内的QQ号使用。优先级最高。",
+        "items": {
+          "type": "string",
+          "description": "用户QQ号"
+        },
+        "default": []
+      },
+      "group_whitelist": {
+        "description": "群聊白名单",
+        "type": "list",
+        "hint": "【只允许】列表内的群号使用。留空则所有群可用。",
+        "items": {
+          "type": "string",
+          "description": "群号"
+        },
+        "default": []
+      },
+      "group_blacklist": {
+        "description": "群聊黑名单",
+        "type": "list",
+        "hint": "【禁止】列表内的群号使用。",
+        "items": {
+          "type": "string",
+          "description": "群号"
+        },
+        "default": []
+      }
+    }
+  },
+  "Checkin_Config": {
+    "description": "签到与经济",
+    "type": "object",
+    "hint": "配置每日签到奖励机制",
+    "items": {
+      "enable_checkin": {
+        "description": "开启每日签到",
+        "type": "bool",
+        "hint": "开启后，用户可使用 #lm签到 获取生图次数。",
+        "default": false
+      },
+      "enable_random_checkin": {
+        "description": "开启随机奖励",
+        "type": "bool",
+        "hint": "开启：奖励为 1~最大值 的随机数；关闭：使用下方固定奖励。",
+        "default": false
+      },
+      "checkin_fixed_reward": {
+        "description": "固定奖励次数",
+        "type": "int",
+        "hint": "关闭随机奖励时的固定赠送次数。",
+        "default": 3
+      },
+      "checkin_random_reward_max": {
+        "description": "随机奖励最大值",
+        "type": "int",
+        "hint": "开启随机奖励时，用户可能获得的最高次数。",
+        "default": 5
+      }
+    }
+  }
 }

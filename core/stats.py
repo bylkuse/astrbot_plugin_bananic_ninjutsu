@@ -143,12 +143,12 @@ class StatsManager:
     # --- 限流 ---
 
     async def _check_rate_limit(self, group_id: str, config: Dict[str, Any]) -> bool:
-        limit_settings = config.get("limit_settings", {})
-        if not limit_settings.get("enable_rate_limit", True) or not group_id:
-            return True
+        perm_conf = config.get("Permission_Config", {})
 
-        period = int(limit_settings.get("rate_limit_period", 60))
-        max_req = int(limit_settings.get("max_requests_per_group", 3))
+        if not perm_conf.get("enable_rate_limit", True) or not group_id:
+            return True
+        period = int(perm_conf.get("rate_limit_period", 60))
+        max_req = int(perm_conf.get("max_requests_per_group", 3))
 
         now = time.time()
         window_start = now - period
@@ -175,27 +175,28 @@ class StatsManager:
     @asynccontextmanager
     async def transaction(self, user_id: str, group_id: Optional[str], config: Dict[str, Any], is_admin: bool = False):
         txn = PermissionTransaction()
+        perm_conf = config.get("Permission_Config", {})
 
         if is_admin:
             txn.allowed = True
             yield txn
             return
 
-        if user_id in config.get("user_blacklist", []):
+        if user_id in perm_conf.get("user_blacklist", []):
             txn.allowed = False; txn.reject_reason = "❌ 您已被加入黑名单。"; yield txn; return
 
-        if group_id and group_id in config.get("group_blacklist", []):
+        if group_id and group_id in perm_conf.get("group_blacklist", []):
             txn.allowed = False; txn.reject_reason = "❌ 本群已被加入黑名单。"; yield txn; return
 
-        if config.get("user_whitelist") and user_id not in config.get("user_whitelist"):
+        if perm_conf.get("user_whitelist") and user_id not in perm_conf.get("user_whitelist"):
             txn.allowed = False; txn.reject_reason = "❌ 您不在白名单中。"; yield txn; return
 
-        if group_id and config.get("group_whitelist") and group_id not in config.get("group_whitelist"):
+        if group_id and perm_conf.get("group_whitelist") and group_id not in perm_conf.get("group_whitelist"):
             txn.allowed = False; txn.reject_reason = "❌ 本群不在白名单中。"; yield txn; return
 
         if group_id and not await self._check_rate_limit(group_id, config):
-            period = config.get("limit_settings", {}).get("rate_limit_period", 60)
             txn.allowed = False
+            period = perm_conf.get("rate_limit_period", 60)
             txn.reject_reason = f"⏳ 群内请求过于频繁，请等待 {period} 秒后再试。"
             yield txn
             return
@@ -203,8 +204,8 @@ class StatsManager:
         user_cnt = self.get_user_count(user_id)
         group_cnt = self.get_group_count(group_id) if group_id else 0
 
-        user_limit_on = config.get("enable_user_limit", True)
-        group_limit_on = config.get("enable_group_limit", False) and group_id
+        user_limit_on = perm_conf.get("enable_user_limit", True)
+        group_limit_on = perm_conf.get("enable_group_limit", False) and group_id
 
         has_user = not user_limit_on or user_cnt > 0
         has_group = not group_limit_on or group_cnt > 0
@@ -293,23 +294,23 @@ class StatsManager:
     # --- 内部 ---
 
     async def _try_daily_checkin(self, user_id: str, config: Dict[str, Any]) -> CheckInResult:
-        if not config.get("enable_checkin", False):
-            if config.get("enable_checkin_display", False):
-                return CheckInResult(False, 0, "📅 签到功能未开启。")
-            return CheckInResult(False) 
+        checkin_conf = config.get("Checkin_Config", {})
+
+        if not checkin_conf.get("enable_checkin", False):
+            return CheckInResult(False, 0, "📅 签到功能未开启。")
 
         uid = str(user_id)
         today = datetime.now().strftime("%Y-%m-%d")
 
         if self.user_checkin_data.get(uid) == today:
-             return CheckInResult(False, 0, "📅 您今天已经签到过了。")
+            return CheckInResult(False, 0, "📅 您今天已经签到过了。")
 
-        is_random = str(config.get("enable_random_checkin", False)).lower() == 'true'
+        is_random = str(checkin_conf.get("enable_random_checkin", False)).lower() == 'true'
         if is_random:
-            base_max = int(config.get("checkin_random_reward_max", 5))
+            base_max = int(checkin_conf.get("checkin_random_reward_max", 5))
             reward = random.randint(1, max(1, base_max))
         else:
-            reward = int(config.get("checkin_fixed_reward", 3))
+            reward = int(checkin_conf.get("checkin_fixed_reward", 3))
 
         self.user_checkin_data[uid] = today
         self._dirty_flags.add("checkin")

@@ -30,14 +30,6 @@ class CommandParser:
     OPTIONAL_VALUE_KEYS = {"upscale_prompt"}
     BOOLEAN_VALUE_KEYS = {"thinking"}
 
-    @staticmethod
-    def _strip_prefix(text: str, prefixes: List[str]) -> str:
-        text_lower = text.lower()
-        for p in prefixes:
-            if text_lower.startswith(p):
-                return text[len(p):]
-        return text
-
     @classmethod
     def parse(cls, event: AstrMessageEvent, cmd_to_remove: str = "", prefixes: List[str] = None) -> ParsedCommand:
         if prefixes is None: prefixes = []
