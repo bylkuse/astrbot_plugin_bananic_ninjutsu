@@ -8,9 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple, Literal
 
 from astrbot.api import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
-    AiocqhttpMessageEvent,
-)
 from astrbot.core.message.components import At
 
 from ..utils.serializer import ConfigSerializer
@@ -21,6 +18,11 @@ class PromptManager:
         self.config = config
         self.prompt_map: Dict[str, str] = {}
         self.optimizer_presets: Dict[str, str] = {}
+
+        # 预编译正则
+        self._param_re = re.compile(r"%p(\d*)(?::([^%]*))?%")
+        self._var_re = re.compile(r"%([a-zA-Z0-9_:|]+?)%")
+
         self.color_list = [
             "red",
             "blue",
@@ -73,7 +75,7 @@ class PromptManager:
         symbols_to_strip = string.punctuation + "，。！？；：”’（）《》【】"
 
         if "%" in text:
-            text = re.sub(r"%p(\d*)?(?::([^%]*))?%", lambda m: m.group(2) or "", text)
+            text = self._param_re.sub(lambda m: m.group(2) or "", text)
 
         return text.rstrip(symbols_to_strip)
 
@@ -91,14 +93,20 @@ class PromptManager:
     async def process_variables(
         self, prompt: str, params: dict, event: Optional[AstrMessageEvent] = None
     ) -> str:
+        # 防ReDoS
+        if len(prompt) > 4096:
+            return prompt
+
         if not prompt or "%" not in prompt:
             return prompt
 
         target_user_id = event.get_sender_id() if event else None
         q_param = params.get("q")
         if q_param:
-            if isinstance(q_param, str) and q_param.isdigit():
-                target_user_id = q_param
+            if isinstance(q_param, str):
+                clean_q = q_param.replace("@", "").strip()
+                if clean_q.isdigit():
+                    target_user_id = clean_q
             elif isinstance(q_param, At):
                 target_user_id = str(q_param.qq)
             elif q_param is True and event:
@@ -111,16 +119,17 @@ class PromptManager:
         user_age, user_birthday = "", ""
         if event and target_user_id and ("%age%" in prompt or "%bd%" in prompt):
             try:
-                info = await event.bot.get_stranger_info(
-                    user_id=int(target_user_id), no_cache=True
-                )
-                user_age = str(info.get("age", ""))
-                if (m := info.get("birthday_month")) and (
-                    d := info.get("birthday_day")
-                ):
-                    user_birthday = f"{m}月{d}日"
-                elif y := info.get("birthday_year"):
-                    user_birthday = f"{y}年"
+                if hasattr(event.bot, "get_stranger_info"):
+                    info = await event.bot.get_stranger_info(
+                        user_id=int(target_user_id), no_cache=True
+                    )
+                    user_age = str(info.get("age", ""))
+                    if (m := info.get("birthday_month")) and (
+                        d := info.get("birthday_day")
+                    ):
+                        user_birthday = f"{m}月{d}日"
+                    elif y := info.get("birthday_year"):
+                        user_birthday = f"{y}年"
             except Exception:
                 pass
 
@@ -158,15 +167,18 @@ class PromptManager:
         for _ in range(5):
             if "%" not in prompt:
                 break
-            prompt = prompt.replace("%%", escaped)
+            original_loop_prompt = prompt
+            if "%%" in prompt:
+                prompt = prompt.replace("%%", escaped)
 
-            prompt = re.sub(
-                r"%p(\d*)?(?::([^%]*))?%",
-                lambda m: str(params.get(f"p{m.group(1) or ''}", m.group(2) or "")),
-                prompt,
-            )
+            def param_replacer(m):
+                idx = m.group(1) or ""
+                default_val = m.group(2) or ""
+                key = f"p{idx}"
+                return str(params.get(key, default_val))
+            prompt = self._param_re.sub(param_replacer, prompt)
 
-            def replacer(m):
+            def var_replacer(m):
                 raw = m.group(1)
                 try:
                     if kv := ConfigSerializer.parse_single_kv(raw):
@@ -176,55 +188,71 @@ class PromptManager:
                 except Exception:
                     return m.group(0)
 
-            prompt = re.sub(r"%([a-zA-Z0-9_:|]+?)%", replacer, prompt)
+            prompt = self._var_re.sub(var_replacer, prompt)
+            if prompt == original_loop_prompt:
+                break
 
         return prompt.replace(escaped, "%")
 
     async def get_group_name(self, event: AstrMessageEvent) -> str:
-        if not isinstance(event, AiocqhttpMessageEvent) or event.is_private_chat():
+        group_id = event.get_group_id()
+        if not group_id:
             return "群聊"
-        try:
-            group_id = event.get_group_id()
-            group_info = await event.bot.get_group_info(group_id=int(group_id))
-            return group_info.get("group_name") or str(group_id)
-        except Exception as e:
-            return event.get_group_id()
+
+        if hasattr(event.bot, "get_group_info"):
+            try:
+                group_info = await event.bot.get_group_info(group_id=int(group_id))
+                return group_info.get("group_name") or str(group_id)
+            except Exception:
+                pass
+        
+        return str(group_id)
 
     async def get_user_nickname(self, event: AstrMessageEvent, user_id: str) -> str:
-        if not isinstance(event, AiocqhttpMessageEvent) or event.is_private_chat():
-            return user_id
-        try:
-            group_id = event.get_group_id()
-            user_info = await event.bot.get_group_member_info(
-                group_id=int(group_id), user_id=int(user_id), no_cache=True
-            )
-            return user_info.get("card") or user_info.get("nickname") or user_id
-        except Exception as e:
-            return user_id
+        group_id = event.get_group_id()
+
+        if group_id and hasattr(event.bot, "get_group_member_info"):
+            try:
+                user_info = await event.bot.get_group_member_info(
+                    group_id=int(group_id), user_id=int(user_id), no_cache=True
+                )
+                return user_info.get("card") or user_info.get("nickname") or user_id
+            except Exception:
+                pass
+
+        if user_id == event.get_sender_id():
+            sender = event.message_obj.sender
+            return getattr(sender, "card", None) or getattr(sender, "nickname", None) or user_id
+
+        return user_id
 
     async def get_random_member_nickname(self, event: AstrMessageEvent) -> str:
         fallback_name = "用户"
-        if not isinstance(event, AiocqhttpMessageEvent) or event.is_private_chat():
-            return fallback_name
-        try:
-            group_id = event.get_group_id()
-            member_list = await event.bot.get_group_member_list(group_id=int(group_id))
-            if not member_list:
-                return (
-                    await self.get_user_nickname(event, event.get_self_id())
-                    or fallback_name
-                )
-            random_member = random.choice(member_list)
-            return (
-                random_member.get("card")
-                or random_member.get("nickname")
-                or fallback_name
-            )
-        except Exception as e:
+        group_id = event.get_group_id()
+
+        if not group_id:
             return (
                 await self.get_user_nickname(event, event.get_self_id())
                 or fallback_name
             )
+
+        if hasattr(event.bot, "get_group_member_list"):
+            try:
+                member_list = await event.bot.get_group_member_list(group_id=int(group_id))
+                if member_list:
+                    random_member = random.choice(member_list)
+                    return (
+                        random_member.get("card")
+                        or random_member.get("nickname")
+                        or fallback_name
+                    )
+            except Exception:
+                pass
+
+        return (
+            await self.get_user_nickname(event, event.get_self_id())
+            or fallback_name
+        )
 
     async def enhance_prompt(
         self,
