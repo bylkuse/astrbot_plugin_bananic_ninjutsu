@@ -550,5 +550,6 @@ class Ninjutsu(Star):
     async def terminate(self):
         await self.stats.stop_auto_save()
         await ImageUtils.terminate()
+        await self.api_client.terminate()
 
         logger.info("[香蕉忍法帖] 插件已终止")

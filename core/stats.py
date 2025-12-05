@@ -99,11 +99,32 @@ class StatsManager:
             try:
                 await asyncio.sleep(self._save_interval)
                 await self._flush_dirty_data()
+                await self._cleanup_rate_limits()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"自动保存循环发生异常: {e}")
                 await asyncio.sleep(5)
+
+    async def _cleanup_rate_limits(self):
+        """清理过期限流"""
+        now = time.time()
+        safe_threshold = 3600
+
+        async with self._rate_limit_lock:
+            if not self._rate_limit_buckets:
+                return
+
+            keys_to_delete = []
+            for gid, timestamps in self._rate_limit_buckets.items():
+                if not timestamps or (timestamps[-1] < now - safe_threshold):
+                    keys_to_delete.append(gid)
+            
+            for gid in keys_to_delete:
+                del self._rate_limit_buckets[gid]
+            
+            if keys_to_delete:
+                logger.debug(f"StatsManager: 已清理 {len(keys_to_delete)} 个过期限流记录")
 
     async def _flush_dirty_data(self):
         if not self._dirty_flags:
@@ -177,9 +198,12 @@ class StatsManager:
             return True
 
     def _remove_rate_limit_record(self, group_id: str):
-        bucket = self._rate_limit_buckets.get(group_id, [])
-        if bucket:
-            bucket.pop()
+        try:
+            bucket = self._rate_limit_buckets.get(group_id)
+            if bucket:
+                bucket.pop()
+        except Exception:
+            pass
 
     # --- 事务 ---
 

@@ -9,8 +9,6 @@ from astrbot.api import logger
 from astrbot.core.message.components import At, Image, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
-PILImage.MAX_IMAGE_PIXELS = 100000000
-
 
 class ImageUtils:
     _session: Optional[aiohttp.ClientSession] = None
@@ -19,7 +17,7 @@ class ImageUtils:
     async def get_session(cls) -> aiohttp.ClientSession:
         """单例 Session"""
         if cls._session is None or cls._session.closed:
-            connector = aiohttp.TCPConnector(limit=100, ssl=False)
+            connector = aiohttp.TCPConnector(limit=100)
             cls._session = aiohttp.ClientSession(connector=connector)
         return cls._session
 
@@ -56,6 +54,7 @@ class ImageUtils:
         img_io = io.BytesIO(raw)
         try:
             with PILImage.open(img_io) as img:
+
                 width, height = img.size
                 if width > max_size or height > max_size:
                     img.thumbnail((max_size, max_size), PILImage.Resampling.LANCZOS)
@@ -80,6 +79,11 @@ class ImageUtils:
                     img.save(out_io, format="PNG", compress_level=3)
 
                 return out_io.getvalue()
+
+        except PILImage.DecompressionBombError:
+            logger.warning(f"检测到超大分辨率图片(DecompressionBomb)，跳过处理，使用原图。")
+            return raw
+
         except Exception as e:
             logger.warning(f"图片处理出错 (使用原图): {e}")
             return raw

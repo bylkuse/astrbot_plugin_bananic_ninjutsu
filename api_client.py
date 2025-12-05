@@ -125,6 +125,20 @@ class APIClient:
         self._key_index = 0
         self._key_lock = asyncio.Lock()
         self._cooldown_keys: Dict[str, float] = {}
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """获取&创建session"""
+        if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(limit=100, ssl=False)
+            self._session = aiohttp.ClientSession(connector=connector)
+        return self._session
+
+    async def terminate(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+            logger.debug("APIClient session closed.")
 
     async def _get_valid_api_key(self, keys: List[str]) -> str:
         """轮询"""
@@ -445,19 +459,19 @@ class APIClient:
         raw_image_bytes = None
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    config.api_base,
-                    json=payload,
-                    headers=headers,
-                    proxy=config.proxy_url,
-                    timeout=120,
-                ) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        raise Exception(f"HTTP {resp.status}: {text[:200]}")
+            session = await self._get_session()
+            async with session.post(
+                config.api_base,
+                json=payload,
+                headers=headers,
+                proxy=config.proxy_url,
+                timeout=120,
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise Exception(f"HTTP {resp.status}: {text[:200]}")
 
-                    data = await resp.json()
+                data = await resp.json()
 
             if "error" in data:
                 err_msg = str(data["error"].get("message", data["error"]))

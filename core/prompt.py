@@ -19,11 +19,6 @@ from ..utils.serializer import ConfigSerializer
 class PromptManager:
     def __init__(self, config: dict, data_dir: Path):
         self.config = config
-        self.data_dir = data_dir
-        # 图片模板(预留)
-        # self.images_dir = self.data_dir / "preset_images"
-        # self.images_dir.mkdir(parents=True, exist_ok=True)
-
         self.prompt_map: Dict[str, str] = {}
         self.optimizer_presets: Dict[str, str] = {}
         self.color_list = [
