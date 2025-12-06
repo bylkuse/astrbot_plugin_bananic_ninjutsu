@@ -196,7 +196,7 @@ class Ninjutsu(Star):
             ):
                 await event.send(r)
             await self._save_connections()
-            return True  # Signal that we handled it
+            return True
 
         return None
 
@@ -286,12 +286,9 @@ class Ninjutsu(Star):
         elif self.pm.get_preset(cmd_pure):
             target_text = cmd_pure
             if parsed.text:
-                params["additional_prompt"] = parsed.text
+                parsed.params["additional_prompt"] = parsed.text
             cmd_display = f"#{cmd_pure}"
         else:
-            return
-
-        if not target_text:
             return
 
         async for res in self.generation_service.run_generation_workflow(
