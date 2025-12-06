@@ -282,12 +282,12 @@ class Ninjutsu(Star):
 
         if cmd_pure == bnn_command or cmd_pure == "图生图":
             target_text = parsed.text
-            cmd_display = f"#{cmd_pure}"
+            cmd_display = f"{self.main_prefix}{cmd_pure}"
         elif self.pm.get_preset(cmd_pure):
             target_text = cmd_pure
             if parsed.text:
                 parsed.params["additional_prompt"] = parsed.text
-            cmd_display = f"#{cmd_pure}"
+            cmd_display = f"{self.main_prefix}{cmd_pure}"
         else:
             return
 
