@@ -13,6 +13,8 @@ from ..utils.parser import ParsedCommand
 
 
 class GenerationService:
+    MAX_IMAGE_COUNT = 5
+
     def __init__(
         self,
         api_client: APIClient,
@@ -199,15 +201,13 @@ class GenerationService:
 
             shared_session = await self.api_client.get_session()
 
-            img_bytes_list = await ImageUtils.get_images_from_event(event, proxy=proxy, session=shared_session)
+            img_bytes_list = await ImageUtils.get_images_from_event(event, max_count=self.MAX_IMAGE_COUNT, proxy=proxy, session=shared_session)
             if not img_bytes_list:
                 yield event.plain_result(
                     "❌ 请发送图片、引用图片，或直接在图片下配文。"
                 )
                 return
-            images_to_process = (
-                img_bytes_list[:5] if len(img_bytes_list) > 5 else img_bytes_list
-            )
+            images_to_process = img_bytes_list
         else:
             images_to_process = []
 

@@ -15,27 +15,17 @@ class ImageUtils:
     async def download_image(
         cls, 
         url: str, 
+        session: aiohttp.ClientSession,
         proxy: str | None = None, 
-        timeout: int = 60,
-        session: aiohttp.ClientSession | None = None
+        timeout: int = 60
     ) -> bytes | None:
         logger.debug(f"正在尝试下载图片: {url}")
         try:
-            if session:
-                async with session.get(url, proxy=proxy, timeout=timeout) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
-                        return None
-                    return await resp.read()
-            else:
-                # 兜底
-                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=10)) as temp_session:
-                    async with temp_session.get(url, proxy=proxy, timeout=timeout) as resp:
-                        if resp.status != 200:
-                            logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
-                            return None
-                        return await resp.read()
-
+            async with session.get(url, proxy=proxy, timeout=timeout) as resp:
+                if resp.status != 200:
+                    logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
+                    return None
+                return await resp.read()
         except Exception as e:
             logger.error(f"图片下载异常: {e}")
             return None

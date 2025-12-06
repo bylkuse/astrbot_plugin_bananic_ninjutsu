@@ -65,6 +65,8 @@ class ConfigSerializer:
             return json.dumps(value, indent=2, ensure_ascii=False)
         return str(value)
 
+    # 以下方法可能引起阻塞，需线程中调用
+
     @staticmethod
     def load_json_from_file(file_path: Path, default: Any = None) -> Any:
         if not file_path.exists():
