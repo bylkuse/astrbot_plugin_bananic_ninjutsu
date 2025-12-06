@@ -11,35 +11,46 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 
 class ImageUtils:
-    _session: aiohttp.ClientSession | None = None
-
     @classmethod
-    async def get_session(cls) -> aiohttp.ClientSession:
-        if cls._session is None or cls._session.closed:
-            connector = aiohttp.TCPConnector(limit=100)
-            cls._session = aiohttp.ClientSession(connector=connector)
-        return cls._session
-
-    @classmethod
-    async def download_image(cls, url: str, proxy: str | None = None, timeout: int = 60) -> bytes | None:
+    async def download_image(
+        cls, 
+        url: str, 
+        proxy: str | None = None, 
+        timeout: int = 60,
+        session: aiohttp.ClientSession | None = None
+    ) -> bytes | None:
         logger.debug(f"正在尝试下载图片: {url}")
         try:
-            session = await cls.get_session()
-            async with session.get(url, proxy=proxy, timeout=timeout) as resp:
-                if resp.status != 200:
-                    logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
-                    return None
-                return await resp.read()
+            if session:
+                async with session.get(url, proxy=proxy, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
+                        return None
+                    return await resp.read()
+            else:
+                # 兜底
+                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=10)) as temp_session:
+                    async with temp_session.get(url, proxy=proxy, timeout=timeout) as resp:
+                        if resp.status != 200:
+                            logger.warning(f"图片下载失败 HTTP {resp.status}: {url}")
+                            return None
+                        return await resp.read()
+
         except Exception as e:
             logger.error(f"图片下载异常: {e}")
             return None
 
     @classmethod
-    async def get_avatar(cls, user_id: str, proxy: str | None = None) -> bytes | None:
+    async def get_avatar(
+        cls, 
+        user_id: str, 
+        proxy: str | None = None,
+        session: aiohttp.ClientSession | None = None
+    ) -> bytes | None:
         if not user_id.isdigit():
             return None
         avatar_url = f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
-        return await cls.download_image(avatar_url, proxy=proxy)
+        return await cls.download_image(avatar_url, proxy=proxy, session=session)
 
     @staticmethod
     def _standardize_image_sync(
@@ -132,9 +143,9 @@ class ImageUtils:
         src: str | bytes,
         proxy: str | None = None,
         ensure_white_bg: bool = False,
-        max_size: int = 2048
+        max_size: int = 2048,
+        session: aiohttp.ClientSession | None = None
     ) -> bytes | None:
-        """加载&处理"""
         raw: bytes | None = None
         loop = asyncio.get_running_loop()
 
@@ -142,7 +153,7 @@ class ImageUtils:
             raw = src
         elif isinstance(src, str):
             if src.startswith("http"):
-                raw = await cls.download_image(src, proxy=proxy)
+                raw = await cls.download_image(src, proxy=proxy, session=session)
             elif src.startswith("base64://"):
                 try:
                     raw = await loop.run_in_executor(None, base64.b64decode, src[9:])
@@ -158,14 +169,17 @@ class ImageUtils:
 
     @classmethod
     async def get_images_from_event(
-        cls, event: AstrMessageEvent, max_count: int = 5, proxy: str | None = None
+        cls, 
+        event: AstrMessageEvent, 
+        max_count: int = 5, 
+        proxy: str | None = None,
+        session: aiohttp.ClientSession | None = None
     ) -> List[bytes]:
-        """提取"""
         img_bytes_list: List[bytes] = []
         at_user_ids: List[str] = []
 
         async def _add_img(source):
-            if img := await cls.load_and_process(source, proxy=proxy, ensure_white_bg=False):
+            if img := await cls.load_and_process(source, proxy=proxy, ensure_white_bg=False, session=session):
                 img_bytes_list.append(img)
 
         for seg in event.message_obj.message:
@@ -186,12 +200,12 @@ class ImageUtils:
 
         if not img_bytes_list and at_user_ids:
             for user_id in at_user_ids:
-                if avatar := await cls.get_avatar(user_id, proxy=proxy):
+                if avatar := await cls.get_avatar(user_id, proxy=proxy, session=session):
                     await _add_img(avatar)
 
         if not img_bytes_list:
             sender_id = event.get_sender_id()
-            if avatar := await cls.get_avatar(sender_id, proxy=proxy):
+            if avatar := await cls.get_avatar(sender_id, proxy=proxy, session=session):
                 await _add_img(avatar)
 
         return img_bytes_list[:max_count]
@@ -234,10 +248,3 @@ class ImageUtils:
         except Exception as e:
             logger.warning(f"图片压缩失败: {e}")
             return raw_bytes
-
-    @classmethod
-    async def terminate(cls):
-        if cls._session and not cls._session.closed:
-            await cls._session.close()
-            cls._session = None
-            logger.debug("ImageUtils session closed.")

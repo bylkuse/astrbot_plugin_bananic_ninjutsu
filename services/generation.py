@@ -197,7 +197,9 @@ class GenerationService:
             conn_conf = self.conf.get("Connection_Config", {})
             proxy = conn_conf.get("proxy_url") if conn_conf.get("use_proxy") else None
 
-            img_bytes_list = await ImageUtils.get_images_from_event(event, proxy=proxy)
+            shared_session = await self.api_client.get_session()
+
+            img_bytes_list = await ImageUtils.get_images_from_event(event, proxy=proxy, session=shared_session)
             if not img_bytes_list:
                 yield event.plain_result(
                     "❌ 请发送图片、引用图片，或直接在图片下配文。"

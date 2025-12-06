@@ -123,13 +123,12 @@ class APIClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    async def get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             async with self._session_lock:
                 if self._session is None or self._session.closed:
                     connector = aiohttp.TCPConnector(limit=100)
                     self._session = aiohttp.ClientSession(connector=connector)
-
         return self._session
 
     async def terminate(self):
@@ -216,11 +215,16 @@ class APIClient:
         if not config.image_bytes_list:
             return []
 
+        session = await self.get_session()
+
         valid_images = []
         for img_bytes in config.image_bytes_list:
             try:
                 processed = await ImageUtils.load_and_process(
-                    img_bytes, proxy=config.proxy_url, ensure_white_bg=True
+                    img_bytes, 
+                    proxy=config.proxy_url, 
+                    ensure_white_bg=True,
+                    session=session
                 )
                 if processed:
                     valid_images.append(processed)
@@ -471,7 +475,7 @@ class APIClient:
         raw_image_bytes = None
 
         try:
-            session = await self._get_session()
+            session = await self.get_session()
             async with session.post(
                 config.api_base,
                 json=payload,
@@ -505,7 +509,7 @@ class APIClient:
                 raw_image_bytes = base64.b64decode(image_url.split(",", 1)[1])
             else:
                 raw_image_bytes = await ImageUtils.download_image(
-                    image_url, proxy=config.proxy_url
+                    image_url, proxy=config.proxy_url, session=session
                 )
 
             if not raw_image_bytes:
