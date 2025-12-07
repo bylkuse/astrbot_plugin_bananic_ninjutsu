@@ -40,8 +40,8 @@ class APIErrorType(Enum):
 
 class APIError(Exception):
     def __init__(self, error_type: APIErrorType, raw_message: str, 
-             status_code: int | None = None, 
-             data: Dict[str, Any] | None = None):
+            status_code: int | None = None, 
+            data: Dict[str, Any] | None = None):
         self.error_type = error_type
         self.raw_message = raw_message
         self.status_code = status_code
@@ -120,7 +120,7 @@ class APIClient:
         self._key_index = 0
         self._key_lock = asyncio.Lock()
         self._cooldown_keys: Dict[str, float] = {}
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()
 
     async def get_session(self) -> aiohttp.ClientSession:
