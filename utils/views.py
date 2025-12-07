@@ -37,13 +37,13 @@ class ResponsePresenter:
         (
             r"%p(\d*)(?::[^%]*)?%",
             "🔧 填空参数",
-            lambda m: f"--p{m}" if m else "--p",  # 特殊处理: 转换成指令参数
+            lambda m: f"--p{m}" if m else "--p",
             "请在指令后追加对应参数。",
         ),
         (
             r"%(un|uid|age|bd)%",
             "👤 用户信息",
-            "VAR_NAMES",  # 使用通用映射
+            "VAR_NAMES",
             "默认为发送者，可用 --q @某人 指定获取目标。",
         ),
         (r"%(g|run)%", "👯 群组互动", "VAR_NAMES", None),
@@ -204,18 +204,18 @@ class ResponsePresenter:
     def connection(is_admin: bool, p: str = "#") -> str:
         lines = [
             "💡 连接管理指令:",
-            f"{p}lm连接 (显示列表)",
-            f"{p}lm连接 <名称> (查看详情)",
-            f"{p}lm连接 to <名称> (切换连接)",
+            f"{p}lmc (显示列表)",
+            f"{p}lmc <名称> (查看详情)",
+            f"{p}lmc to <名称> (切换连接)",
         ]
         if is_admin:
             lines.extend(
                 [
                     "🔧 管理员指令:",
-                    f"{p}lm连接 add <name> <type> <url> <model> [keys] (添加)",
-                    f"{p}lm连接 del <name> (删除)",
-                    f"{p}lm连接 ren <旧名> <新名> (重命名)",
-                    f"{p}lm连接 debug (调试模式)",
+                    f"{p}lmc add <name> <type> <url> <model> [keys] (添加)",
+                    f"{p}lmc del <name> (删除)",
+                    f"{p}lmc ren <旧名> <新名> (重命名)",
+                    f"{p}lmc debug (调试模式)",
                 ]
             )
         return "\n".join(lines)
@@ -257,16 +257,16 @@ class ResponsePresenter:
                 masked_key = k
 
             lines.append(f"{i + 1}. {masked_key}")
-        lines.append(f"\n💡 指令提示: {p}lmk del <预设名> <序号> 删除指定Key")
+        lines.append(f"\n💡 指令提示: {p}lmk del <预设名> [序号] 删除指定Key")
         return "\n".join(lines)
 
     @staticmethod
     def key_management(current_preset: str, p: str = "#") -> str:
         return (
             f"🔑 Key 管理指令 (管理员):\n"
-            f"{p}lmk [预设名] - 查看指定预设的Key\n"
-            f"{p}lmk add <预设名> <Key1> [Key2]... - 添加Key\n"
-            f"{p}lmk del <预设名> <序号|all> - 删除Key\n"
+            f"{p}lmk <预设名> - 查看指定预设的Key\n"
+            f"{p}lmk <预设名> [Key1] [Key2]... - 添加Key\n"
+            f"{p}lmk del <预设名> [序号|all] - 删除Key\n"
             f"注: 当前连接预设为 [{current_preset}]"
         )
 
@@ -277,12 +277,12 @@ class ResponsePresenter:
             f"{cmd_prefix} (显示列表)",
             f"{cmd_prefix} l (简略名录)",
             f"{cmd_prefix} <名称> (查看内容)",
-            f"{cmd_prefix} <名称>:<内容> (添加/修改)",
+            f"{cmd_prefix} <名称>:[内容] (添加/修改)",
         ]
         if is_admin:
             lines.extend(
                 [
-                    f"{cmd_prefix} del <名称> (管理员删除)",
+                    f"{cmd_prefix} del <预设名> (管理员删除)",
                     f"{cmd_prefix} ren <旧名> <新名> (管理员重命名)",
                 ]
             )
@@ -302,11 +302,11 @@ class ResponsePresenter:
 
         return (
             f"【🛠️ 调试模式】\n"
-            f"🔗 API: {data.get('api_type')}\n"
-            f"🧠 模型: {model_display}\n"
-            f"🖼️ 图数: {data.get('image_count', 0)}张\n"
-            f"📝 提示词: {prompt}\n\n"
-            f"(⏱️ 模拟耗时: {elapsed:.2f}s)"
+            f"🔗  {data.get('api_type')}\n"
+            f"🧠  {model_display}\n"
+            f"🖼️  {data.get('image_count', 0)}张\n"
+            f"📝  {prompt}\n\n"
+            f"(⏱️  {elapsed:.2f}s)"
         )
 
     @staticmethod
@@ -330,7 +330,7 @@ class ResponsePresenter:
     {p}lmp 或 {p}lm预设 ▸ 列表预览
     {p}lmo 或 {p}lm优化 ▸ 优化预设预览
   ▸ 通用操作:
-    {p}lmp <名称>:<内容> ▸ 添加/覆盖
+    {p}lmp <名称>:[内容] ▸ 添加/覆盖
     {p}lmp del/ren ... ▸ 删除/重命名
 
 --- 🔧 管理 ---

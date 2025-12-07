@@ -1,3 +1,4 @@
+import asyncio
 from functools import wraps
 from typing import Any, Dict, List, Tuple
 from astrbot.api import logger
@@ -472,8 +473,7 @@ class Ninjutsu(Star):
         parsed = CommandParser.parse(
             event, cmd_aliases=["lm密钥", "lmk"], prefixes=self.global_prefixes
         )
-        cmd_text = parsed.text
-        parts = cmd_text.split()
+        parts = parsed.text.split()
 
         if not parts:
             current_preset = self.generation_service.conn_config.get("name", "Unknown")
@@ -482,98 +482,86 @@ class Ninjutsu(Star):
             )
             return
 
-        sub = parts[0].lower()
-        args = parts[1:]
+        cmd_type = parts[0].lower()
 
-        try:
-            if sub == "add":
-                if len(args) < 2:
-                    yield event.plain_result(
-                        f"格式错误: {self.main_prefix}lmk add <预设名> <Key1> [Key2]..."
-                    )
-                    return
-                name = args[0]
-                if name not in self.connection_presets:
-                    yield event.plain_result(
-                        ResponsePresenter.item_not_found("预设", name)
-                    )
-                    return
-
-                preset = self.connection_presets[name]
-                current_keys = preset.get("api_keys", [])
-                new_keys_to_add = [k for k in args[1:] if k not in current_keys]
-
-                async for res in self.config_mgr.perform_save_with_confirm(
-                    event,
-                    preset,
-                    "api_keys",
-                    current_keys + new_keys_to_add,
-                    f"密钥组({name})",
-                ):
-                    yield res
-
-                await self._save_connections()
-
-            elif sub == "del":
-                if len(args) < 2:
-                    yield event.plain_result(
-                        f"格式错误: {self.main_prefix}lmk del <预设名> <序号|all>"
-                    )
-                    return
-                name, idx_str = args[0], args[1]
-                if name not in self.connection_presets:
-                    yield event.plain_result(
-                        ResponsePresenter.item_not_found("预设", name)
-                    )
-                    return
-
-                preset = self.connection_presets[name]
-                keys = preset.get("api_keys", [])
-
-                new_key_list = None
-                if idx_str.lower() == "all":
-                    new_key_list = []
-                elif idx_str.isdigit():
-                    idx = int(idx_str)
-                    if 1 <= idx <= len(keys):
-                        new_key_list = keys[: idx - 1] + keys[idx:]
-
-                if new_key_list is None:
-                    yield event.plain_result("❌ 序号无效。")
-                    return
-
-                async for res in self.config_mgr.perform_save_with_confirm(
-                    event, preset, "api_keys", new_key_list, f"密钥组({name})"
-                ):
-                    yield res
-
-                await self._save_connections()
-
-            else:
-                target_preset_name = ""
-
-                if sub == "list" and args:
-                    target_preset_name = args[0]
-                else:
-                    target_preset_name = parts[0]
-
-                if target_preset_name not in self.connection_presets:
-                    yield event.plain_result(
-                        ResponsePresenter.item_not_found("预设", target_preset_name)
-                    )
-                    return
-
-                keys = self.connection_presets[target_preset_name].get("api_keys", [])
-
+        if cmd_type == "del":
+            if len(parts) < 3:
                 yield event.plain_result(
-                    ResponsePresenter.format_key_list(
-                        target_preset_name, keys, self.main_prefix
-                    )
+                    f"❌ 格式错误: {self.main_prefix}lmk del <预设名> <序号|all>"
                 )
+                return
 
-        except Exception as e:
-            logger.error(f"Key 操作失败: {e}", exc_info=True)
-            yield event.plain_result(f"❌ 操作失败: {e}")
+            name, idx_str = parts[1], parts[2]
+            if name not in self.connection_presets:
+                yield event.plain_result(
+                    ResponsePresenter.item_not_found("预设", name)
+                )
+                return
+
+            preset = self.connection_presets[name]
+            keys = preset.get("api_keys", [])
+
+            new_keys_list = []
+            msg_prefix = ""
+
+            if idx_str.lower() == "all":
+                new_keys_list = []
+                msg_prefix = "🗑️ 已清空"
+            elif idx_str.isdigit():
+                idx = int(idx_str)
+                if 1 <= idx <= len(keys):
+                    new_keys_list = keys[:idx-1] + keys[idx:]
+                    msg_prefix = f"🗑️ 已删除第 {idx} 个Key"
+                else:
+                    yield event.plain_result(f"❌ 序号 {idx} 无效 (当前共 {len(keys)} 个)。")
+                    return
+            else:
+                yield event.plain_result("❌ 序号格式错误，请输入数字或 'all'。")
+                return
+
+            preset["api_keys"] = new_keys_list
+            await self._save_connections()
+
+            list_str = ResponsePresenter.format_key_list(name, new_keys_list, self.main_prefix)
+            yield event.plain_result(f"{msg_prefix}。\n\n{list_str}")
+            return
+
+        target_name = parts[0]
+        if target_name not in self.connection_presets:
+            yield event.plain_result(
+                ResponsePresenter.item_not_found("预设", target_name)
+            )
+            return
+
+        keys_to_add = parts[1:]
+
+        if keys_to_add:
+            preset = self.connection_presets[target_name]
+            current_keys = preset.get("api_keys", [])
+
+            added_count = 0
+            for k in keys_to_add:
+                if k not in current_keys:
+                    current_keys.append(k)
+                    added_count += 1
+
+            if added_count == 0:
+                yield event.plain_result("💡 提供的 Key 已存在，未发生变更。")
+                list_str = ResponsePresenter.format_key_list(target_name, current_keys, self.main_prefix)
+                yield event.plain_result(list_str)
+                return
+
+            preset["api_keys"] = current_keys
+            await self._save_connections()
+
+            list_str = ResponsePresenter.format_key_list(target_name, current_keys, self.main_prefix)
+            yield event.plain_result(f"✅ 已添加 {added_count} 个Key。\n\n{list_str}")
+
+        else:
+            keys = self.connection_presets[target_name].get("api_keys", [])
+            yield event.plain_result(
+                ResponsePresenter.format_key_list(target_name, keys, self.main_prefix)
+            )
 
     async def terminate(self):
         await self.stats.stop_auto_save()
