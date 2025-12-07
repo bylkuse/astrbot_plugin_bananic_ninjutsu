@@ -92,7 +92,7 @@ class PromptManager:
     async def process_variables(
         self, 
         prompt: str, 
-        parsed_command: ParsedCommand,  # 替换 params: dict
+        parsed_command: ParsedCommand,
         event: AstrMessageEvent | None = None
     ) -> str:
         # 防ReDoS
@@ -300,7 +300,16 @@ class PromptManager:
             provider = None
 
         if provider is None:
-            provider = context.get_using_provider(umo=event.unified_msg_origin)
+            try:
+                provider = context.get_using_provider(umo=event.unified_msg_origin)
+            except Exception:
+                pass
+
+        if provider is None and hasattr(context, "get_default_provider"):
+            try:
+                provider = context.get_default_provider()
+            except Exception:
+                pass
 
         if provider is None:
             logger.warning("提示词优化失败: 未找到可用的 LLM 供应商。")
@@ -310,36 +319,49 @@ class PromptManager:
             full_prompt = user_content_template.format(prompt=original_prompt)
             full_prompt += " Directly output the final prompt without explanation."
 
-            resp = await provider.text_chat(
-                prompt=full_prompt,
-                context=[],
-                system_prompt=system_instruction,
-                model=gen_conf.get("prompt_enhanced_model"),
-            )
+            p_name = getattr(provider, "id", None) or type(provider).__name__
+            logger.info(f"正在调用 LLM ({p_name}) 进行提示词优化...")
+
+            call_kwargs = {
+                "prompt": full_prompt,
+                "context": [],
+                "system_prompt": system_instruction,
+            }
+            target_model = gen_conf.get("prompt_enhanced_model")
+            if target_model:
+                call_kwargs["model"] = target_model
+
+            resp = await provider.text_chat(**call_kwargs)
 
             enhancer_model_name = getattr(resp.raw_completion, "model_version", None)
 
-            content = getattr(resp, "text", None) or getattr(resp, "content", None)
+            content = getattr(resp, "completion_text", None)
+            if not content:
+                content = getattr(resp, "text", None) or getattr(resp, "content", None)
+
             if not content:
                 rc = getattr(resp, "result_chain", None)
                 if rc and getattr(rc, "chain", None):
                     parts = [str(seg.text) for seg in rc.chain if hasattr(seg, "text")]
                     content = "\n".join(parts)
+
             if not content:
                 content = str(resp)
 
             content = content.strip()
-            if content.startswith("LLMResponse("):
-                content = ""
+            if content.startswith("LLMResponse(") or content.startswith("<astrbot"):
+                logger.warning(f"提示词优化失败: LLM 返回内容解析异常: {content}")
+                return original_prompt, None, None
 
-            if not content or "error" in content.lower():
-                logger.warning(f"提示词优化失败: LLM 返回无效内容: {content}")
+            if not content or ("error" in content.lower() and len(content) < 50):
+                logger.warning(f"提示词优化失败: LLM 返回疑似错误信息: {content}")
                 return original_prompt, None, None
 
             logger.info(
-                f"提示词优化 [{used_preset_name}]: {original_prompt} -> {content}"
+                f"提示词优化 [{used_preset_name}]: {original_prompt[:20]}... -> {content[:20]}..."
             )
             return content, enhancer_model_name, used_preset_name
+
         except Exception as e:
             logger.error(f"调用 LLM 进行提示词优化时出错: {e}", exc_info=True)
             return original_prompt, None, None

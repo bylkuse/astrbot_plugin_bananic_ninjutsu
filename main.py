@@ -12,7 +12,12 @@ from .api_client import APIClient
 from .core.prompt import PromptManager
 from .core.stats import StatsManager
 from .core.images import ImageUtils
-from .core.config_mgr import ConfigManager
+from .core.config_mgr import (
+    ConfigManager, 
+    DictDataStrategy, 
+    ListKeyStrategy, 
+    ConnectionStrategy
+)
 from .services.generation import GenerationService
 from .utils.serializer import ConfigSerializer
 from .utils.parser import CommandParser, ParsedCommand
@@ -83,20 +88,7 @@ class Ninjutsu(Star):
             active_preset_data,
             main_prefix=self.main_prefix,
         )
-
         logger.info("香蕉忍法帖 插件已加载")
-
-    async def _save_connections(self):
-        if "Connection_Config" not in self.conf:
-            self.conf["Connection_Config"] = {}
-
-        serialized_data = await asyncio.to_thread(
-            ConfigSerializer.dump_json_list, 
-            self.connection_presets
-        )
-        self.conf["Connection_Config"]["connection_presets"] = serialized_data
-
-        await self.config_mgr.save_config()
 
     def _resolve_admin_cmd(
         self, event: AstrMessageEvent, parsed: ParsedCommand
@@ -128,133 +120,6 @@ class Ninjutsu(Star):
             target_id = event.get_sender_id()
 
         return target_id, count_val, is_group
-
-    async def _handle_connection_extras(
-        self, event: AstrMessageEvent, parts: List[str], is_admin: bool
-    ) -> Any:
-        """lmc扩展指令"""
-        sub = parts[0].lower() if parts else ""
-
-        if not parts or sub in ["l", "list"]:
-            help_text = ResponsePresenter.connection(is_admin, self.main_prefix)
-            if not self.connection_presets:
-                return event.plain_result(f"供应商:\n- 暂无可用供应商。\n\n{help_text}")
-
-            msg = ["供应商:"]
-            current_active_name = self.generation_service.conn_config.get("name")
-            for name, data in self.connection_presets.items():
-                prefix = "➡️" if name == current_active_name else "▪️"
-                msg.append(
-                    f"{prefix} {name} ({data.get('api_type', 'N/A')}, {len(data.get('api_keys', []))} keys)"
-                )
-            msg.extend(["", help_text])
-            return event.plain_result("\n".join(msg))
-
-        if sub == "to" and len(parts) == 2:
-            target = parts[1]
-            if target not in self.connection_presets:
-                return event.plain_result(ResponsePresenter.item_not_found("预设", target))
-
-            if "Connection_Config" not in self.conf:
-                self.conf["Connection_Config"] = {}
-            self.conf["Connection_Config"]["current_preset_name"] = target
-
-            self.generation_service.set_active_preset(self.connection_presets[target])
-            await self.config_mgr.save_config()
-            return event.plain_result(
-                ResponsePresenter.format_connection_switch_success(
-                    target, self.connection_presets[target]
-                )
-            )
-
-        if sub in ["debug", "d"] and is_admin:
-            basic_conf = self.conf.get("Basic_Config", {})
-            new_state = not basic_conf.get("debug_prompt", False)
-
-            if "Basic_Config" not in self.conf:
-                self.conf["Basic_Config"] = {}
-            self.conf["Basic_Config"]["debug_prompt"] = new_state
-
-            await self.config_mgr.save_config()
-            return event.plain_result(
-                f"{'✅' if new_state else '❌'} 调试模式已{'开启' if new_state else '关闭'}。"
-            )
-
-        if len(parts) >= 5 and parts[0].lower() == "add":
-            if not is_admin:
-                return event.plain_result(ResponsePresenter.unauthorized_admin())
-            name, api_type, api_url, model = parts[1], parts[2], parts[3], parts[4]
-            keys = parts[5].split(",") if len(parts) > 5 else []
-            new_data = {
-                "name": name,
-                "api_type": api_type,
-                "api_url": api_url,
-                "model": model,
-                "api_keys": keys,
-            }
-            async for r in self.config_mgr.perform_save_with_confirm(
-                event, self.connection_presets, name, new_data, "连接预设"
-            ):
-                await event.send(r)
-            await self._save_connections()
-            return True
-
-        return None
-
-    async def _handle_connection_update(
-        self, event: AstrMessageEvent, target_name: str, args: List[str], is_admin: bool
-    ) -> bool:
-        if not is_admin:
-            await event.send(event.plain_result(ResponsePresenter.unauthorized_admin()))
-            return True
-
-        if len(args) != 2:
-            return False
-
-        target_key, target_val = args[0], args[1]
-        allowed_keys = {"api_url", "model", "api_type", "api_base"}
-
-        if target_key not in allowed_keys:
-            await event.send(
-                event.plain_result(
-                    f"❌ 属性 [{target_key}] 不可修改。\n可选: {', '.join(allowed_keys)}"
-                )
-            )
-            return True
-
-        preset = self.connection_presets[target_name]
-        async for r in self.config_mgr.perform_save_with_confirm(
-            event,
-            preset,
-            target_key,
-            target_val,
-            f"预设[{target_name}]的{target_key}",
-        ):
-            await event.send(r)
-
-        if self.generation_service.conn_config.get("name") == target_name:
-            self.generation_service.set_active_preset(preset)
-        await self._save_connections()
-        return True
-
-    async def _on_connection_delete(self, deleted_key: str):
-        current_active_name = self.generation_service.conn_config.get("name")
-        if current_active_name == deleted_key:
-            new_name = next(iter(self.connection_presets.keys()), "GoogleDefault")
-
-            if "Connection_Config" not in self.conf:
-                self.conf["Connection_Config"] = {}
-            self.conf["Connection_Config"]["current_preset_name"] = new_name
-
-            if new_name in self.connection_presets:
-                self.generation_service.set_active_preset(
-                    self.connection_presets[new_name]
-                )
-            else:
-                self.generation_service.set_active_preset(
-                    {"name": "None", "api_keys": []}
-                )
-        await self._save_connections()
 
     # --- Event Handlers ---
 
@@ -337,54 +202,43 @@ class Ninjutsu(Star):
     @filter.command("lm优化", alias={"lmo"}, prefix_optional=True)
     async def on_optimizer_management(self, event: AstrMessageEvent):
         """管理优化预设"""
-        async for res in self.config_mgr.handle_crud_command(
-            event,
-            ["lm优化", "lmo"],
-            self.pm.get_target_dict("optimizer"),
-            "优化预设",
-            duplicate_check_type="optimizer",
-        ):
+        strategy = DictDataStrategy(
+            data=self.pm.get_target_dict("optimizer"),
+            item_name="优化预设",
+            config_mgr=self.config_mgr,
+            duplicate_type="optimizer"
+        )
+        async for res in self.config_mgr.handle_crud_command(event, ["lm优化", "lmo"], strategy):
             yield res
 
     @filter.command("lm预设", alias={"lmp"}, prefix_optional=True)
     async def on_preset_management(self, event: AstrMessageEvent):
         """管理生图预设"""
-        async for res in self.config_mgr.handle_crud_command(
-            event,
-            ["lm预设", "lmp"],
-            self.pm.get_target_dict("prompt"),
-            "生图预设",
-            duplicate_check_type="prompt",
-        ):
+        strategy = DictDataStrategy(
+            data=self.pm.get_target_dict("prompt"),
+            item_name="生图预设",
+            config_mgr=self.config_mgr,
+            duplicate_type="prompt"
+        )
+        async for res in self.config_mgr.handle_crud_command(event, ["lm预设", "lmp"], strategy):
             yield res
 
     @filter.command("lm连接", alias={"lmc"}, prefix_optional=True)
     @require_service
     async def on_connection_management(self, event: AstrMessageEvent):
         """管理连接预设"""
-        is_admin = self.config_mgr.is_admin(event)
+        async def save_callback():
+            await self.config_mgr.save_connection_presets(self.connection_presets)
 
-        extra_handler = lambda evt, pts: self._handle_connection_extras(
-            evt, pts, is_admin
-        )
-        update_handler = lambda evt, name, args: self._handle_connection_update(
-            evt, name, args, is_admin
-        )
-        delete_handler = self._on_connection_delete
-        display_handler = lambda k, v: ResponsePresenter.format_connection_detail(
-            k, v, self.main_prefix
+        strategy = ConnectionStrategy(
+            data=self.connection_presets,
+            config_mgr=self.config_mgr,
+            generation_service=self.generation_service,
+            raw_config=self.conf,
+            save_callback=save_callback
         )
 
-        async for res in self.config_mgr.handle_crud_command(
-            event,
-            ["lm连接", "lmc"],
-            self.connection_presets,
-            "连接预设",
-            after_delete_callback=delete_handler,
-            extra_cmd_handler=extra_handler,
-            custom_update_handler=update_handler,
-            custom_display_handler=display_handler,
-        ):
+        async for res in self.config_mgr.handle_crud_command(event, ["lm连接", "lmc"], strategy):
             yield res
 
     @filter.command("lm帮助", alias={"lmh"}, prefix_optional=True)
@@ -470,98 +324,44 @@ class Ninjutsu(Star):
             yield event.plain_result(ResponsePresenter.unauthorized_admin())
             return
 
-        parsed = CommandParser.parse(
-            event, cmd_aliases=["lm密钥", "lmk"], prefixes=self.global_prefixes
-        )
+        current_name = self.generation_service.conn_config.get("name", "Unknown")
+
+        parsed = CommandParser.parse(event, cmd_aliases=["lm密钥", "lmk"], prefixes=self.global_prefixes)
         parts = parsed.text.split()
 
-        if not parts:
-            current_preset = self.generation_service.conn_config.get("name", "Unknown")
-            yield event.plain_result(
-                ResponsePresenter.key_management(current_preset, self.main_prefix)
-            )
-            return
+        target_preset_name = current_name
+        args_to_pass = parts
 
-        cmd_type = parts[0].lower()
+        if parts:
+            if parts[0] in self.connection_presets:
+                target_preset_name = parts[0]
+                args_to_pass = parts[1:]
 
-        if cmd_type == "del":
-            if len(parts) < 3:
-                yield event.plain_result(
-                    f"❌ 格式错误: {self.main_prefix}lmk del <预设名> <序号|all>"
-                )
-                return
+            elif parts[0].lower() == "del" and len(parts) >= 3:
+                potential_preset = parts[1]
+                if potential_preset in self.connection_presets:
+                    target_preset_name = potential_preset
+                    args_to_pass = ["del", parts[2]]
 
-            name, idx_str = parts[1], parts[2]
-            if name not in self.connection_presets:
-                yield event.plain_result(
-                    ResponsePresenter.item_not_found("预设", name)
-                )
-                return
+        target_data = self.connection_presets.get(target_preset_name, {})
 
-            preset = self.connection_presets[name]
-            keys = preset.get("api_keys", [])
+        if "api_keys" not in target_data or not isinstance(target_data["api_keys"], list):
+            target_data["api_keys"] = []
 
-            new_keys_list = []
-            msg_prefix = ""
+        keys_list = target_data["api_keys"]
 
-            if idx_str.lower() == "all":
-                new_keys_list = []
-                msg_prefix = "🗑️ 已清空"
-            elif idx_str.isdigit():
-                idx = int(idx_str)
-                if 1 <= idx <= len(keys):
-                    new_keys_list = keys[:idx-1] + keys[idx:]
-                    msg_prefix = f"🗑️ 已删除第 {idx} 个Key"
-                else:
-                    yield event.plain_result(f"❌ 序号 {idx} 无效 (当前共 {len(keys)} 个)。")
-                    return
-            else:
-                yield event.plain_result("❌ 序号格式错误，请输入数字或 'all'。")
-                return
+        async def save_keys():
+            await self.config_mgr.save_connection_presets(self.connection_presets)
 
-            preset["api_keys"] = new_keys_list
-            await self._save_connections()
+        strategy = ListKeyStrategy(
+            preset_name=target_preset_name,
+            key_list=keys_list,
+            config_mgr=self.config_mgr,
+            save_callback=save_keys
+        )
 
-            list_str = ResponsePresenter.format_key_list(name, new_keys_list, self.main_prefix)
-            yield event.plain_result(f"{msg_prefix}。\n\n{list_str}")
-            return
-
-        target_name = parts[0]
-        if target_name not in self.connection_presets:
-            yield event.plain_result(
-                ResponsePresenter.item_not_found("预设", target_name)
-            )
-            return
-
-        keys_to_add = parts[1:]
-
-        if keys_to_add:
-            preset = self.connection_presets[target_name]
-            current_keys = preset.get("api_keys", [])
-
-            added_count = 0
-            for k in keys_to_add:
-                if k not in current_keys:
-                    current_keys.append(k)
-                    added_count += 1
-
-            if added_count == 0:
-                yield event.plain_result("💡 提供的 Key 已存在，未发生变更。")
-                list_str = ResponsePresenter.format_key_list(target_name, current_keys, self.main_prefix)
-                yield event.plain_result(list_str)
-                return
-
-            preset["api_keys"] = current_keys
-            await self._save_connections()
-
-            list_str = ResponsePresenter.format_key_list(target_name, current_keys, self.main_prefix)
-            yield event.plain_result(f"✅ 已添加 {added_count} 个Key。\n\n{list_str}")
-
-        else:
-            keys = self.connection_presets[target_name].get("api_keys", [])
-            yield event.plain_result(
-                ResponsePresenter.format_key_list(target_name, keys, self.main_prefix)
-            )
+        async for res in self.config_mgr.handle_crud_command(event, ["lm密钥", "lmk"], strategy, args_override=args_to_pass):
+            yield res
 
     async def terminate(self):
         await self.stats.stop_auto_save()
