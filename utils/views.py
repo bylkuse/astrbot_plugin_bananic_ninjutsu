@@ -83,15 +83,50 @@ class ResponsePresenter:
     @staticmethod
     def generation_success(
         elapsed: float,
-        preset_name: str,
+        conn_name: str,
+        model_name: str,
+        gen_preset_name: str | None,
+        prompt: str,
         enhancer_model: str | None = None,
         enhancer_preset: str | None = None,
+        aspect_ratio: str = "default",
+        image_size: str = "default",
+        user_quota: int = 0,
+        group_quota: int = 0,
+        is_group: bool = False
     ) -> str:
-        parts = [f"✅ 生成成功 ({elapsed:.2f}s)", f"连接: {preset_name}"]
+        # 模型
+        clean_gen_model = model_name.split("/")[-1] if "/" in model_name else model_name
+        line1 = f"🚀 [{conn_name}] {clean_gen_model}"
         if enhancer_model:
-            preset_suffix = f"({enhancer_preset})" if enhancer_preset else ""
-            parts.append(f"✨{enhancer_model}{preset_suffix}")
-        return " | ".join(parts)
+            clean_enhancer = enhancer_model.split("/")[-1] if "/" in enhancer_model else enhancer_model
+            line1 += f" (+{clean_enhancer})"
+
+        # 预设&时间
+        display_strategy = gen_preset_name if gen_preset_name else "自定义"
+        if enhancer_preset and enhancer_preset != "default":
+            display_strategy += f" ({enhancer_preset})"
+        line2 = f"🎨 {display_strategy} · ⏱️{elapsed:.1f}s"
+
+        # 提示词预览
+        clean_prompt = prompt.replace("\n", " ").strip()
+        limit = 25
+        if len(clean_prompt) > limit:
+            preview = clean_prompt[:limit] + "..."
+        else:
+            preview = clean_prompt
+        line3 = f"📝 {preview}"
+
+        # 规格&额度
+        ar = aspect_ratio if aspect_ratio != "default" else "自动"
+        sz = image_size if image_size != "default" else "默认"
+        specs = f"📐 {ar} · 📏 {sz}"
+        quota_str = f"👤 {user_quota}"
+        if is_group:
+            quota_str += f" · 👥 {group_quota}"
+        line4 = f"{specs} | 💳 {quota_str}"
+
+        return "\n".join([line1, line2, line3, line4])
 
     @staticmethod
     def unauthorized_admin() -> str:

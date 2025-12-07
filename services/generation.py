@@ -44,6 +44,7 @@ class GenerationService:
         is_master: bool,
         enhancer_model_name: str | None = None,
         enhancer_preset: str | None = None,
+        gen_preset_name: str | None = None,
     ):
         """调用&返回"""
         sender_id = event.get_sender_id()
@@ -54,7 +55,12 @@ class GenerationService:
             sender_id, group_id, self.conf, is_master
         ) as txn:
             if not txn.allowed:
-                yield event.plain_result(txn.reject_reason)
+                msg = txn.reject_reason
+                if getattr(txn, "exhausted", False):
+                    checkin_conf = self.conf.get("Checkin_Config", {})
+                    if checkin_conf.get("enable_checkin", False):
+                        msg += f"\n💡 提示: 发送 {self.main_prefix}lm 签到可获取次数。"
+                yield event.plain_result(msg)
                 return
 
             yield event.plain_result(ResponsePresenter.generating(display_prompt))
@@ -103,9 +109,27 @@ class GenerationService:
                 thoughts = gen_result.thoughts
 
                 elapsed = (datetime.now() - start_time).total_seconds()
-                current_preset_name = self.conn_config.get("name", "Unknown")
+                current_user_quota = self.stats.get_user_count(sender_id)
+                current_group_quota = self.stats.get_group_count(group_id) if group_id else 0
+
+                ar_val = params.get("aspect_ratio", "default")
+                sz_val = params.get("image_size", "1K")
+                if ar_val is True: ar_val = "default"
+                if sz_val is True: sz_val = "default"
+
                 caption = ResponsePresenter.generation_success(
-                    elapsed, current_preset_name, enhancer_model_name, enhancer_preset
+                    elapsed=elapsed,
+                    conn_name=self.conn_config.get("name", "Unknown"),
+                    model_name=self.conn_config.get("model", "Unknown"),
+                    gen_preset_name=gen_preset_name,
+                    prompt=prompt,
+                    enhancer_model=enhancer_model_name,
+                    enhancer_preset=enhancer_preset,
+                    aspect_ratio=str(ar_val),
+                    image_size=str(sz_val),
+                    user_quota=current_user_quota,
+                    group_quota=current_group_quota,
+                    is_group=bool(group_id)
                 )
 
                 result_chain = []
@@ -150,7 +174,13 @@ class GenerationService:
         params = parsed_command.params
         # 预设解析
         prompt_template = self.pm.get_preset(target_text)
-        user_prompt = prompt_template if prompt_template else target_text
+        gen_preset_name = None
+        if prompt_template:
+            user_prompt = prompt_template
+            gen_preset_name = target_text
+        else:
+            user_prompt = target_text
+            gen_preset_name = None
 
         # 追加prompt
         additional = params.get("additional_prompt")
@@ -219,5 +249,6 @@ class GenerationService:
             is_master,
             enhancer_model_name,
             enhancer_preset,
+            gen_preset_name=gen_preset_name,
         ):
             yield result

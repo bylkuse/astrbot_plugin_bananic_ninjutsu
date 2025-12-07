@@ -19,6 +19,7 @@ class PermissionTransaction:
     _deducted_group: bool = False
     _is_failed: bool = False
     _fail_reason: str = ""
+    exhausted: bool = False
 
     def mark_failed(self, reason: str):
         self._is_failed = True
@@ -262,12 +263,14 @@ class StatsManager:
             if not has_group and not has_user:
                 txn.allowed = False
                 txn.reject_reason = "❌ 本群次数与您的个人次数均已用尽。"
+                txn.exhausted = True
                 yield txn
                 self._remove_rate_limit_record(group_id)
                 return
         elif not has_user:
             txn.allowed = False
             txn.reject_reason = "❌ 您的使用次数已用完。"
+            txn.exhausted = True
             yield txn
             return
 
