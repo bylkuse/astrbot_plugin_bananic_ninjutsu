@@ -20,31 +20,62 @@ class DataStrategy(ABC):
         self.item_name = item_name
         self.mgr = config_mgr
 
-    @abstractmethod
-    def get_all_keys(self) -> List[str]:
-        pass
+    async def process(self, event: AstrMessageEvent, sub_cmd: str, args: List[str]):
+        if sub_cmd in ["l", "list"] or (not sub_cmd and not args):
+            yield event.plain_result(self.get_summary(simple=(sub_cmd == "l")))
+            return
+
+        extra_res = await self.handle_custom_command(event, sub_cmd, args)
+        if extra_res:
+            yield extra_res
+            return
+
+        if not self.mgr.is_admin(event):
+            yield event.plain_result(ResponsePresenter.unauthorized_admin())
+            return
+
+        if sub_cmd == "del":
+            if not args:
+                yield event.plain_result(f"❌ 格式错误: 请指定要删除的{self.item_name}名称。")
+                return
+            success, msg = await self.do_delete(args[0])
+            if msg: yield event.plain_result(msg)
+
+        elif sub_cmd == "ren":
+            if len(args) < 2:
+                yield event.plain_result(f"❌ 格式错误: ren <旧名> <新名>")
+                return
+            success, msg = await self.do_rename(args[0], args[1])
+            if msg: yield event.plain_result(msg)
+
+        elif sub_cmd == "add":
+            async for res in self.do_add(event, args):
+                yield res
+            
+        else:
+            async for res in self.do_update_or_view(event, sub_cmd, args):
+                yield res
 
     @abstractmethod
-    def get_details(self, key: str) -> str | None:
+    def get_summary(self, simple: bool = False) -> str:
         pass
 
-    def get_list_summary(self) -> str:
-        keys = self.get_all_keys()
-        if not keys:
-            return f"✨ {self.item_name}列表为空。"
-        keys_str = ", ".join(keys)
-        return f"✨ {self.item_name}名录:\n{keys_str}\n\n💡 使用 {self.mgr.main_prefix}lmc <名称> 查看详情。"
-
-    @abstractmethod
-    async def delete(self, key: str) -> Tuple[bool, str]:
-        pass
-
-    @abstractmethod
-    async def update(self, event: AstrMessageEvent, key: str, args: List[str]) -> Tuple[bool, str]:
-        pass
-
-    async def handle_extra(self, event: AstrMessageEvent, cmd: str, args: List[str]) -> Any | None:
+    async def handle_custom_command(self, event, cmd, args) -> Any | None:
         return None
+
+    async def do_delete(self, key: str) -> Tuple[bool, str]:
+        return False, "❌ 该类型不支持删除操作。"
+
+    async def do_rename(self, old_key: str, new_key: str) -> Tuple[bool, str]:
+        return False, "❌ 该类型不支持重命名操作。"
+
+    async def do_add(self, event, args: List[str]) -> Any:
+        yield event.plain_result("❌ 请使用 update 格式直接添加。")
+
+    @abstractmethod
+    async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
+        pass
+
 
 class DictDataStrategy(DataStrategy):
     def __init__(self, data: Dict[str, str], item_name: str, config_mgr, duplicate_type: str | None = None):
@@ -52,14 +83,25 @@ class DictDataStrategy(DataStrategy):
         self.data = data
         self.dup_type = duplicate_type
 
-    def get_all_keys(self) -> List[str]:
-        return sorted(self.data.keys())
+    def get_summary(self, simple: bool = False) -> str:
+        keys = sorted(self.data.keys())
+        if not keys:
+            return f"✨ {self.item_name}列表为空。"
 
-    def get_details(self, key: str) -> str | None:
-        if key not in self.data: return None
-        return ResponsePresenter.format_preset_detail(self.item_name, key, self.data[key])
+        if simple:
+            return f"✨ {self.item_name}名录:\n" + ", ".join(keys)
 
-    async def delete(self, key: str) -> Tuple[bool, str]:
+        lines = [f"✨ {self.item_name}列表 (详细):"]
+        for k in keys:
+            content = str(self.data.get(k, "")).replace("\n", " ").strip()
+            preview = content[:30] + "..." if len(content) > 30 else content
+            lines.append(f"▪️ [{k}]: {preview}")
+
+        cmd_p = self.mgr.main_prefix
+        lines.append(f"\n💡 指令: {cmd_p}lmp <名> (查看) | {cmd_p}lmp <名>:<值> (添加/修改)")
+        return "\n".join(lines)
+
+    async def do_delete(self, key: str) -> Tuple[bool, str]:
         if key not in self.data:
             return False, ResponsePresenter.item_not_found(self.item_name, key)
         if self.item_name == "优化预设" and key == "default":
@@ -68,35 +110,51 @@ class DictDataStrategy(DataStrategy):
         await self.mgr.save_config()
         return True, f"✅ 已删除 {self.item_name} [{key}]。"
 
-    async def update(self, event: AstrMessageEvent, key: str, args: List[str]) -> Tuple[bool, str]:
-        full_text = ""
-        if args:
-            full_text = key + " " + " ".join(args)
-        else:
-            full_text = key
+    async def do_rename(self, old_key: str, new_key: str) -> Tuple[bool, str]:
+        if old_key not in self.data:
+            return False, ResponsePresenter.item_not_found(self.item_name, old_key)
+        if new_key in self.data:
+            return False, f"❌ 重命名失败: 目标名称 [{new_key}] 已存在。"
+        if self.item_name == "优化预设" and old_key == "default":
+            return False, "❌ 'default' 是系统保留的核心预设，禁止重命名。"
 
+        self.data[new_key] = self.data.pop(old_key)
+        await self.mgr.save_config()
+        return True, f"✅ 已将 {self.item_name} [{old_key}] 重命名为 [{new_key}]。"
+
+    async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
+        full_text = key + " " + " ".join(args) if args else key
         parsed = ConfigSerializer.parse_single_kv(full_text)
-        if not parsed:
+
+        if not parsed and (not args and ":" not in key):
+            detail = self.data.get(key)
+            if detail:
+                yield event.plain_result(ResponsePresenter.format_preset_detail(self.item_name, key, detail))
+            else:
+                yield event.plain_result(ResponsePresenter.item_not_found(self.item_name, key))
+            return
+
+        if parsed:
+            real_key, val = parsed
+        else:
             parts = full_text.split(None, 1)
             if len(parts) == 2:
-                parsed = (parts[0], parts[1])
+                real_key, val = parts[0], parts[1]
             else:
-                return False, f"❌ 格式错误。正确格式: {self.mgr.main_prefix}lmp <名称>:[内容] 或 <名称> [内容]"
-
-        real_key, val = parsed
+                yield event.plain_result(f"❌ 格式错误。正确格式: <名称>:[内容] 或 <名称> [内容]")
+                return
 
         if self.dup_type:
-            val_str = str(val)
-            dup = self.mgr.pm.check_duplicate(self.dup_type, val_str)
+            dup = self.mgr.pm.check_duplicate(self.dup_type, str(val))
             if dup and dup != real_key:
-                return False, ResponsePresenter.duplicate_item("内容于", dup) + " 无需重复添加。"
+                yield event.plain_result(ResponsePresenter.duplicate_item("内容于", dup) + " 无需重复添加。")
+                return
 
         async for res in self.mgr.perform_save_with_confirm(
             event, self.data, real_key, val, self.item_name
         ):
-            await event.send(res)
+            yield res
 
-        return True, ""
 
 class ListKeyStrategy(DataStrategy):
     def __init__(
@@ -111,18 +169,10 @@ class ListKeyStrategy(DataStrategy):
         self.data = key_list
         self.save_callback = save_callback
 
-    def get_all_keys(self) -> List[str]:
-        return [str(i+1) for i in range(len(self.data))]
-
-    def get_list_summary(self) -> str:
+    def get_summary(self, simple: bool = False) -> str:
         return ResponsePresenter.format_key_list(self.preset_name, self.data, self.mgr.main_prefix)
 
-    def get_details(self, key: str) -> str | None:
-        if key.lower() == "all":
-            return self.get_list_summary()
-        return None
-
-    async def delete(self, key: str) -> Tuple[bool, str]:
+    async def do_delete(self, key: str) -> Tuple[bool, str]:
         if key.lower() == "all":
             self.data.clear()
             msg = "🗑️ 已清空所有 Key。"
@@ -130,55 +180,49 @@ class ListKeyStrategy(DataStrategy):
             idx = int(key)
             if 1 <= idx <= len(self.data):
                 self.data.pop(idx - 1)
-                msg = f"🗑️ 已删除第 {idx} 个 Key。"
+                summary = self.get_summary()
+                msg = f"🗑️ 已删除第 {idx} 个 Key。\n\n{summary}"
             else:
                 return False, f"❌ 序号 {idx} 无效。"
         else:
             return False, "❌ 序号格式错误。"
-        if self.save_callback:
-            await self.save_callback()
-        else:
-            await self.mgr.save_config()
 
-        summary = self.get_list_summary()
-        return True, f"{msg}\n当前剩余: {len(self.data)} 个。\n\n{summary}"
+        if self.save_callback: await self.save_callback()
+        else: await self.mgr.save_config()
 
-    async def update(self, event: AstrMessageEvent, key: str, args: List[str]) -> Tuple[bool, str]:
+        return True, f"{msg}\n当前剩余: {len(self.data)} 个。"
+
+    async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
         keys_to_add = [key] + args
         added = 0
         first_duplicate = None
 
         for k in keys_to_add:
-            if not k: 
-                continue
-
+            if not k: continue
             if k not in self.data:
                 self.data.append(k)
                 added += 1
             else:
-                if first_duplicate is None:
-                    first_duplicate = k
+                if first_duplicate is None: first_duplicate = k
 
         if added > 0:
-            if self.save_callback:
-                await self.save_callback()
-            else:
-                await self.mgr.save_config()
+            if self.save_callback: await self.save_callback()
+            else: await self.mgr.save_config()
 
-            summary = self.get_list_summary()
-            return True, f"✅ 已添加 {added} 个 Key。\n\n{summary}"
+            summary = self.get_summary()
+            yield event.plain_result(f"✅ 已添加 {added} 个 Key。\n\n{summary}")
+        elif first_duplicate:
+            yield event.plain_result(ResponsePresenter.duplicate_item("API Key", first_duplicate) + " 无需重复添加。")
+        else:
+            yield event.plain_result("❌ 未提供有效的 Key。")
 
-        if first_duplicate:
-            return False, ResponsePresenter.duplicate_item("API Key", first_duplicate) + " 无需重复添加。"
-
-        return False, "❌ 未提供有效的 Key。"
 
 class ConnectionStrategy(DataStrategy):
     def __init__(
         self, 
         data: Dict, 
         config_mgr: 'ConfigManager',
-        generation_service: Any,
+        generation_service: 'GenerationService',
         raw_config: Dict[str, Any],
         save_callback: Callable | None = None
     ):
@@ -188,16 +232,17 @@ class ConnectionStrategy(DataStrategy):
         self.raw_config = raw_config
         self.save_callback = save_callback
 
-    def get_all_keys(self) -> List[str]:
-        return sorted(self.data.keys())
-
     @property
     def active_preset_name(self) -> str:
         return self.gen_service.conn_config.get("name", "None")
 
-    def get_list_summary(self) -> str:
+    def get_summary(self, simple: bool = False) -> str:
         if not self.data:
             return f"✨ {self.item_name}列表为空。"
+
+        if simple:
+            keys_str = ", ".join(sorted(self.data.keys()))
+            return f"✨ {self.item_name}名录:\n{keys_str}"
 
         msg = [f"✨ {self.item_name}名录:"]
         for name, data in self.data.items():
@@ -208,86 +253,18 @@ class ConnectionStrategy(DataStrategy):
         msg.append(f"\n💡 使用 {self.mgr.main_prefix}lmc <名称> 查看详情。")
         return "\n".join(msg)
 
-    def get_details(self, key: str) -> str | None:
-        if key not in self.data: return None
-        return ResponsePresenter.format_connection_detail(key, self.data[key], self.mgr.main_prefix)
-
-    async def delete(self, key: str) -> Tuple[bool, str]:
-        if key not in self.data: 
-            return False, ResponsePresenter.item_not_found(self.item_name, key)
-
-        del self.data[key]
-
-        msg = f"✅ 已删除连接预设 [{key}]。"
-
-        if self.active_preset_name == key:
-            new_name = next(iter(self.data.keys()), None)
-
-            if "Connection_Config" not in self.raw_config:
-                self.raw_config["Connection_Config"] = {}
-
-            if new_name:
-                self.raw_config["Connection_Config"]["current_preset_name"] = new_name
-                self.gen_service.set_active_preset(self.data[new_name])
-                msg += f"\n⚠️ 当前连接已被删除，自动切换至: {new_name}"
-            else:
-                self.raw_config["Connection_Config"]["current_preset_name"] = "None"
-                self.gen_service.set_active_preset({"name": "None", "api_keys": []})
-                msg += "\n⚠️ 当前连接已被删除，且无备用连接。"
-
-        if self.save_callback: 
-            await self.save_callback() 
-        else: 
-            await self.mgr.save_config()
-
-        return True, msg
-
-    async def update(self, event: AstrMessageEvent, key: str, args: List[str]) -> Tuple[bool, str]:
-        if not args and key != "add":
-            return False, "❌ 参数不足。"
-
-        if key == "add":
-            if len(args) < 4: return False, "❌ 格式: add <name> <type> <url> <model> [keys]"
-            name, type_, url, model = args[0], args[1], args[2], args[3]
-            keys = args[4].split(",") if len(args) > 4 else []
-
-            new_data = {"name": name, "api_type": type_, "api_url": url, "model": model, "api_keys": keys}
-
-            async for res in self.mgr.perform_save_with_confirm(
-                event, self.data, name, new_data, "连接预设", custom_save_func=self.save_callback
-            ):
-                await event.send(res)
-            return True, ""
-
-        target_name = key
-        prop = args[0]
-        val = args[1]
-
-        if target_name not in self.data:
-            return False, ResponsePresenter.item_not_found("预设", target_name)
-
-        allowed = {"api_url", "model", "api_type", "api_base"}
-        if prop not in allowed:
-            return False, f"❌ 属性不可修改。可选: {allowed}"
-
-        target_obj = self.data[target_name]
-
-        async for res in self.mgr.perform_save_with_confirm(
-            event, target_obj, prop, val, f"预设[{target_name}]的{prop}", custom_save_func=self.save_callback
-        ):
-            await event.send(res)
-
-        return True, ""
-
-    async def handle_extra(self, event, cmd, args) -> Any | None:
-        if cmd == "to" and args:
+    async def handle_custom_command(self, event, cmd, args) -> Any | None:
+        cmd_lower = cmd.lower()
+        if cmd == "to":
+            if not args:
+                return event.plain_result("❌ 请指定要切换的预设名称。")
             target = args[0]
             if target in self.data:
                 if "Connection_Config" not in self.raw_config: 
                     self.raw_config["Connection_Config"] = {}
                 self.raw_config["Connection_Config"]["current_preset_name"] = target
+                
                 self.gen_service.set_active_preset(self.data[target])
-
                 if self.save_callback: await self.save_callback()
                 else: await self.mgr.save_config()
 
@@ -301,7 +278,6 @@ class ConnectionStrategy(DataStrategy):
 
             if "Basic_Config" not in self.mgr.conf:
                 self.mgr.conf["Basic_Config"] = {}
-
             basic_conf = self.mgr.conf["Basic_Config"]
             new_state = not basic_conf.get("debug_prompt", False)
             basic_conf["debug_prompt"] = new_state
@@ -310,6 +286,105 @@ class ConnectionStrategy(DataStrategy):
             return event.plain_result(f"{'✅' if new_state else '❌'} 调试模式已{'开启' if new_state else '关闭'}。")
 
         return None
+
+    async def do_add(self, event, args: List[str]) -> Any:
+        if len(args) < 4: 
+            yield event.plain_result("❌ 格式: add <name> <type> <url> <model> [keys]")
+            return
+
+        name, type_, url, model = args[0], args[1], args[2], args[3]
+        keys = args[4].split(",") if len(args) > 4 else []
+
+        if name in self.data:
+            yield event.plain_result(ResponsePresenter.duplicate_item("连接预设", name))
+            return
+
+        new_data = {"name": name, "api_type": type_, "api_url": url, "model": model, "api_keys": keys}
+
+        async for res in self.mgr.perform_save_with_confirm(
+            event, self.data, name, new_data, "连接预设", custom_save_func=self.save_callback
+        ):
+            yield res
+
+    async def do_delete(self, key: str) -> Tuple[bool, str]:
+        if key not in self.data: 
+            return False, ResponsePresenter.item_not_found(self.item_name, key)
+
+        del self.data[key]
+        msg = f"✅ 已删除连接预设 [{key}]。"
+
+        if self.active_preset_name == key:
+            new_name = next(iter(self.data.keys()), None)
+            if "Connection_Config" not in self.raw_config:
+                self.raw_config["Connection_Config"] = {}
+
+            if new_name:
+                self.raw_config["Connection_Config"]["current_preset_name"] = new_name
+                self.gen_service.set_active_preset(self.data[new_name])
+                msg += f"\n⚠️ 当前连接已被删除，自动切换至: {new_name}"
+            else:
+                self.raw_config["Connection_Config"]["current_preset_name"] = "None"
+                self.gen_service.set_active_preset({"name": "None", "api_keys": []})
+                msg += "\n⚠️ 当前连接已被删除，且无备用连接。"
+
+        if self.save_callback: await self.save_callback() 
+        else: await self.mgr.save_config()
+
+        return True, msg
+
+    async def do_rename(self, old_key: str, new_key: str) -> Tuple[bool, str]:
+        if old_key not in self.data:
+            return False, ResponsePresenter.item_not_found(self.item_name, old_key)
+        if new_key in self.data:
+            return False, f"❌ 重命名失败: 连接预设 [{new_key}] 已存在。"
+
+        val = self.data.pop(old_key)
+        if isinstance(val, dict): val["name"] = new_key
+        self.data[new_key] = val
+
+        if self.gen_service.conn_config is val or self.raw_config.get("Connection_Config", {}).get("current_preset_name") == old_key:
+            if "Connection_Config" not in self.raw_config:
+                self.raw_config["Connection_Config"] = {}
+            self.raw_config["Connection_Config"]["current_preset_name"] = new_key
+            self.gen_service.set_active_preset(val)
+
+        if self.save_callback: await self.save_callback()
+        else: await self.mgr.save_config()
+
+        return True, f"✅ 已将 {self.item_name} [{old_key}] 重命名为 [{new_key}]。"
+
+    async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
+        if not args:
+            if key not in self.data: 
+                yield event.plain_result(ResponsePresenter.item_not_found(self.item_name, key))
+            else:
+                yield event.plain_result(ResponsePresenter.format_connection_detail(key, self.data[key], self.mgr.main_prefix))
+            return
+
+        if len(args) < 2:
+            yield event.plain_result(f"❌ 格式错误: {self.mgr.main_prefix}lmc <预设名> <属性> <值>")
+            return
+
+        target_name = key
+        prop = args[0]
+        val = args[1]
+
+        if target_name not in self.data:
+            yield event.plain_result(ResponsePresenter.item_not_found("预设", target_name))
+            return
+
+        allowed = {"api_url", "model", "api_type", "api_base"}
+        if prop not in allowed:
+            yield event.plain_result(f"❌ 属性不可修改。可选: {allowed}")
+            return
+
+        target_obj = self.data[target_name]
+
+        async for res in self.mgr.perform_save_with_confirm(
+            event, target_obj, prop, val, f"预设[{target_name}]的{prop}", custom_save_func=self.save_callback
+        ):
+            yield res
+
 
 class ConfigManager:
     def __init__(
@@ -345,7 +420,6 @@ class ConfigManager:
             presets
         )
         self.conf["Connection_Config"]["connection_presets"] = serialized_data
-
         await self.save_config()
 
     async def perform_save_with_confirm(
@@ -357,7 +431,6 @@ class ConfigManager:
         item_name: str,
         custom_save_func: Callable | None = None
     ):
-        """覆盖查验"""
         async def perform_save():
             target_dict[key] = new_value
             if custom_save_func:
@@ -416,79 +489,14 @@ class ConfigManager:
         strategy: DataStrategy,
         args_override: List[str] | None = None
     ):
-        is_admin = self.is_admin(event)
-        cmd_display = f"{self.main_prefix}{cmd_aliases[0]}"
-
         if args_override is not None:
             parts = args_override
         else:
             parsed = CommandParser.parse(event, cmd_aliases=cmd_aliases, prefixes=self.prefixes)
             parts = parsed.text.split()
 
-        raw_sub = parts[0] if parts else ""
-        sub_cmd = raw_sub.lower()
+        sub_cmd = parts[0] if parts else ""
         args = parts[1:] if len(parts) > 1 else []
 
-        if sub_cmd in ["l", "list"]:
-            yield event.plain_result(strategy.get_list_summary())
-            return
-
-        if not parts:
-            if isinstance(strategy, DictDataStrategy):
-                keys = strategy.get_all_keys()
-                if not keys:
-                    yield event.plain_result(strategy.get_list_summary())
-                    return
-
-                lines = [f"✨ {strategy.item_name}列表 (详细):"]
-                for k in keys:
-                    content = strategy.data.get(k, "")
-                    content_str = str(content).replace("\n", " ").strip()
-                    preview = content_str[:30] + "..." if len(content_str) > 30 else content_str
-                    lines.append(f"▪️ [{k}]: {preview}")
-
-                lines.append(ResponsePresenter.presets_common(strategy.item_name, cmd_display, is_admin))
-                yield event.plain_result("\n".join(lines))
-                return
-
-            yield event.plain_result(strategy.get_list_summary())
-            return
-
-        extra_res = await strategy.handle_extra(event, sub_cmd, args)
-        if extra_res:
-            yield extra_res
-            return
-
-        if sub_cmd == "del":
-            if not is_admin:
-                yield event.plain_result(ResponsePresenter.unauthorized_admin())
-                return
-            if not args:
-                yield event.plain_result(f"❌ 格式错误: {cmd_display} del <名称>")
-                return
-
-            success, msg = await strategy.delete(args[0])
-            yield event.plain_result(msg)
-            return
-
-        if not args and sub_cmd not in ["add", "ren"] and "=" not in raw_sub and ":" not in raw_sub:
-            detail = strategy.get_details(raw_sub)
-            if detail:
-                yield event.plain_result(detail)
-                return
-
-            if isinstance(strategy, ListKeyStrategy):
-                pass
-            elif isinstance(strategy, ConnectionStrategy):
-                pass 
-            else:
-                yield event.plain_result(ResponsePresenter.item_not_found(strategy.item_name, raw_sub))
-                return
-
-        if not is_admin:
-             yield event.plain_result(ResponsePresenter.unauthorized_admin())
-             return
-
-        success, msg = await strategy.update(event, raw_sub, args)
-        if msg:
-            yield event.plain_result(msg)
+        async for res in strategy.process(event, sub_cmd, args):
+            yield res

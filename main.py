@@ -1,6 +1,6 @@
 import asyncio
 from functools import wraps
-from typing import Any, Dict, List, Tuple
+from typing import List, Tuple
 from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools
@@ -53,7 +53,7 @@ class Ninjutsu(Star):
         self.stats = StatsManager(self.plugin_data_dir)
         self.config_mgr = ConfigManager(self.conf, self.pm, self.context)
 
-        self.connection_presets: Dict[str, Any] = {}
+        self.connection_presets = {}
         self.generation_service: GenerationService | None = None
 
     async def initialize(self):
