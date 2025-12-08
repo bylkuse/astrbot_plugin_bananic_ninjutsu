@@ -396,6 +396,10 @@ class APIClient:
             for k in expired_keys:
                 del self._cooldown_keys[k]
 
+            # 防索引越界
+            if self._key_index >= len(keys):
+                self._key_index = 0
+
             available_key = None
             for _ in range(len(keys)):
                 current_key = keys[self._key_index]

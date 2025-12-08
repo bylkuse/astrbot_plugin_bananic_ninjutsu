@@ -207,7 +207,8 @@ class Ninjutsu(Star):
             data=self.pm.get_target_dict("optimizer"),
             item_name="优化预设",
             config_mgr=self.config_mgr,
-            duplicate_type="optimizer"
+            duplicate_type="optimizer",
+            cmd_name="lmo"
         )
         async for res in self.config_mgr.handle_crud_command(event, ["lm优化", "lmo"], strategy):
             yield res
@@ -219,7 +220,8 @@ class Ninjutsu(Star):
             data=self.pm.get_target_dict("prompt"),
             item_name="生图预设",
             config_mgr=self.config_mgr,
-            duplicate_type="prompt"
+            duplicate_type="prompt",
+            cmd_name="lmp"
         )
         async for res in self.config_mgr.handle_crud_command(event, ["lm预设", "lmp"], strategy):
             yield res

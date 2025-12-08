@@ -99,6 +99,7 @@ class DictDataStrategy(DataStrategy):
         super().__init__(item_name, config_mgr)
         self.data = data
         self.dup_type = duplicate_type
+        self.cmd_name = cmd_name
 
     def get_summary(self, simple: bool = False) -> str:
         keys = sorted(self.data.keys())
@@ -115,7 +116,7 @@ class DictDataStrategy(DataStrategy):
             lines.append(f"▪️ [{k}]: {preview}")
 
         cmd_p = self.mgr.main_prefix
-        lines.append(f"\n💡 指令: {cmd_p}lmp <名> (查看) | {cmd_p}lmp <名>:<值> (添加/修改)")
+        lines.append(f"\n💡 指令: {cmd_p}{self.cmd_name} <名> (查看) | {cmd_p}{self.cmd_name} <名>:[内容] (添加/修改)")
         return "\n".join(lines)
 
     async def do_delete(self, key: str) -> Tuple[bool, str]:
