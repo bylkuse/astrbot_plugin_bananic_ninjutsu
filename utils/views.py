@@ -35,25 +35,35 @@ class ResponsePresenter:
 
     VAR_RULES = [
         (
-            r"%p(\d*)(?::[^%]*)?%",
+            re.compile(r"%p(\d*)(?::[^%]*)?%", re.IGNORECASE),
             "🔧 填空参数",
             lambda m: f"--p{m}" if m else "--p",
             "请在指令后追加对应参数。",
         ),
         (
-            r"%(un|uid|age|bd)%",
+            re.compile(r"%(un|uid|age|bd)%", re.IGNORECASE),
             "👤 用户信息",
             "VAR_NAMES",
             "默认为发送者，可用 --q @某人 指定获取目标。",
         ),
-        (r"%(g|run)%", "👯 群组互动", "VAR_NAMES", None),
         (
-            r"%(r|rn|rl|rc)(?::[^%]*)?%",
+            re.compile(r"%(g|run)%", re.IGNORECASE), 
+            "👯 群组互动", 
+            "VAR_NAMES", 
+            None
+        ),
+        (
+            re.compile(r"%(r|rn|rl|rc)(?::[^%]*)?%", re.IGNORECASE),
             "🎲 随机变量",
             "VAR_NAMES",
             "每次生成结果不同。",
         ),
-        (r"%(d|t|wd)%", "📅 时间日期", "VAR_NAMES", None),
+        (
+            re.compile(r"%(d|t|wd)%", re.IGNORECASE), 
+            "📅 时间日期", 
+            "VAR_NAMES", 
+            None
+        ),
     ]
 
     @staticmethod
@@ -394,7 +404,7 @@ class ResponsePresenter:
             hints = []
 
             for pattern, title, logic, extra_msg in cls.VAR_RULES:
-                raw_matches = set(re.findall(pattern, content, re.IGNORECASE))
+                raw_matches = set(pattern.findall(content))
                 if not raw_matches:
                     continue
 

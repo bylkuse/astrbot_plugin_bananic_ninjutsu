@@ -306,21 +306,19 @@ class StatsManager:
     def get_group_count(self, group_id: str) -> int:
         return self.group_counts.get(str(group_id), 0)
 
-    async def modify_user_count(self, user_id: str, delta: int) -> int:
-        uid = str(user_id)
-        current = self.user_counts.get(uid, 0)
+    async def _modify_generic_count(self, dataset: Dict[str, int], key: str, delta: int, flag_name: str) -> int:
+        s_key = str(key)
+        current = dataset.get(s_key, 0)
         new_val = max(0, current + delta)
-        self.user_counts[uid] = new_val
-        self._dirty_flags.add("user_counts")
+        dataset[s_key] = new_val
+        self._dirty_flags.add(flag_name)
         return new_val
 
+    async def modify_user_count(self, user_id: str, delta: int) -> int:
+        return await self._modify_generic_count(self.user_counts, user_id, delta, "user_counts")
+
     async def modify_group_count(self, group_id: str, delta: int) -> int:
-        gid = str(group_id)
-        current = self.group_counts.get(gid, 0)
-        new_val = max(0, current + delta)
-        self.group_counts[gid] = new_val
-        self._dirty_flags.add("group_counts")
-        return new_val
+        return await self._modify_generic_count(self.group_counts, group_id, delta, "group_counts")
 
     async def modify_resource(self, target_id: str, count: int, is_group: bool) -> int:
         if is_group:

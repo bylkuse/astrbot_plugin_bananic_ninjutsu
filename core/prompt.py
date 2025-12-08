@@ -4,7 +4,7 @@ import string
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Tuple, Literal
+from typing import Any, Dict, Tuple, Literal, Callable, Coroutine
 
 from astrbot.api import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -89,6 +89,71 @@ class PromptManager:
                 return key
         return None
 
+    async def _safe_fetch(
+        self, 
+        api_coroutine: Coroutine, 
+        extractor: Callable[[Any], Any], 
+        default: Any = None
+    ) -> Any:
+        try:
+            result = await api_coroutine
+            val = extractor(result)
+            return val if val else default
+        except Exception:
+            return default
+
+    async def get_group_name(self, event: AstrMessageEvent) -> str:
+        group_id = event.get_group_id()
+        if not group_id:
+            return "群聊"
+
+        if hasattr(event.bot, "get_group_info"):
+            name = await self._safe_fetch(
+                event.bot.get_group_info(group_id=int(group_id)),
+                lambda res: res.get("group_name")
+            )
+            if name: return name
+
+        return str(group_id)
+
+    async def get_user_nickname(self, event: AstrMessageEvent, user_id: str) -> str:
+        group_id = event.get_group_id()
+
+        if group_id and hasattr(event.bot, "get_group_member_info"):
+            name = await self._safe_fetch(
+                event.bot.get_group_member_info(
+                    group_id=int(group_id), user_id=int(user_id), no_cache=True
+                ),
+                lambda res: res.get("card") or res.get("nickname")
+            )
+            if name: return name
+
+        if user_id == event.get_sender_id():
+            sender = event.message_obj.sender
+            return getattr(sender, "card", None) or getattr(sender, "nickname", None) or user_id
+
+        return user_id
+
+    async def get_random_member_nickname(self, event: AstrMessageEvent) -> str:
+        fallback_name = "用户"
+        group_id = event.get_group_id()
+
+        if not group_id:
+            return await self.get_user_nickname(event, event.get_self_id()) or fallback_name
+
+        if hasattr(event.bot, "get_group_member_list"):
+            name = await self._safe_fetch(
+                event.bot.get_group_member_list(group_id=int(group_id)),
+                lambda res_list: (
+                    random.choice(res_list).get("card") 
+                    or random.choice(res_list).get("nickname") 
+                    if res_list else None
+                )
+            )
+            if name: return name
+
+        return await self.get_user_nickname(event, event.get_self_id()) or fallback_name
+
     async def process_variables(
         self, 
         prompt: str, 
@@ -123,20 +188,16 @@ class PromptManager:
 
         user_age, user_birthday = "", ""
         if event and target_user_id and ("%age%" in prompt or "%bd%" in prompt):
-            try:
-                if hasattr(event.bot, "get_stranger_info"):
-                    info = await event.bot.get_stranger_info(
-                        user_id=int(target_user_id), no_cache=True
-                    )
+            if hasattr(event.bot, "get_stranger_info"):
+                try:
+                    info = await event.bot.get_stranger_info(user_id=int(target_user_id), no_cache=True)
                     user_age = str(info.get("age", ""))
-                    if (m := info.get("birthday_month")) and (
-                        d := info.get("birthday_day")
-                    ):
+                    if (m := info.get("birthday_month")) and (d := info.get("birthday_day")):
                         user_birthday = f"{m}月{d}日"
                     elif y := info.get("birthday_year"):
                         user_birthday = f"{y}年"
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
         if event:
             ctx_map = {
@@ -198,66 +259,6 @@ class PromptManager:
                 break
 
         return prompt.replace(escaped, "%")
-
-    async def get_group_name(self, event: AstrMessageEvent) -> str:
-        group_id = event.get_group_id()
-        if not group_id:
-            return "群聊"
-
-        if hasattr(event.bot, "get_group_info"):
-            try:
-                group_info = await event.bot.get_group_info(group_id=int(group_id))
-                return group_info.get("group_name") or str(group_id)
-            except Exception:
-                pass
-        
-        return str(group_id)
-
-    async def get_user_nickname(self, event: AstrMessageEvent, user_id: str) -> str:
-        group_id = event.get_group_id()
-
-        if group_id and hasattr(event.bot, "get_group_member_info"):
-            try:
-                user_info = await event.bot.get_group_member_info(
-                    group_id=int(group_id), user_id=int(user_id), no_cache=True
-                )
-                return user_info.get("card") or user_info.get("nickname") or user_id
-            except Exception:
-                pass
-
-        if user_id == event.get_sender_id():
-            sender = event.message_obj.sender
-            return getattr(sender, "card", None) or getattr(sender, "nickname", None) or user_id
-
-        return user_id
-
-    async def get_random_member_nickname(self, event: AstrMessageEvent) -> str:
-        fallback_name = "用户"
-        group_id = event.get_group_id()
-
-        if not group_id:
-            return (
-                await self.get_user_nickname(event, event.get_self_id())
-                or fallback_name
-            )
-
-        if hasattr(event.bot, "get_group_member_list"):
-            try:
-                member_list = await event.bot.get_group_member_list(group_id=int(group_id))
-                if member_list:
-                    random_member = random.choice(member_list)
-                    return (
-                        random_member.get("card")
-                        or random_member.get("nickname")
-                        or fallback_name
-                    )
-            except Exception:
-                pass
-
-        return (
-            await self.get_user_nickname(event, event.get_self_id())
-            or fallback_name
-        )
 
     async def enhance_prompt(
         self,
@@ -334,32 +335,23 @@ class PromptManager:
             resp = await provider.text_chat(**call_kwargs)
 
             enhancer_model_name = getattr(resp.raw_completion, "model_version", None)
-
-            content = getattr(resp, "completion_text", None)
-            if not content:
-                content = getattr(resp, "text", None) or getattr(resp, "content", None)
+            content = (
+                getattr(resp, "completion_text", None) or 
+                getattr(resp, "text", None) or 
+                getattr(resp, "content", None)
+            )
 
             if not content:
                 rc = getattr(resp, "result_chain", None)
                 if rc and getattr(rc, "chain", None):
-                    parts = [str(seg.text) for seg in rc.chain if hasattr(seg, "text")]
-                    content = "\n".join(parts)
+                    content = "\n".join([str(seg.text) for seg in rc.chain if hasattr(seg, "text")])
 
-            if not content:
-                content = str(resp)
+            content = str(content or str(resp)).strip()
 
-            content = content.strip()
-            if content.startswith("LLMResponse(") or content.startswith("<astrbot"):
-                logger.warning(f"提示词优化失败: LLM 返回内容解析异常: {content}")
+            if not content or content.startswith("LLMResponse") or ("error" in content.lower() and len(content) < 50):
+                logger.warning(f"提示词优化失败: LLM 返回异常: {content}")
                 return original_prompt, None, None
 
-            if not content or ("error" in content.lower() and len(content) < 50):
-                logger.warning(f"提示词优化失败: LLM 返回疑似错误信息: {content}")
-                return original_prompt, None, None
-
-            logger.info(
-                f"提示词优化 [{used_preset_name}]: {original_prompt[:20]}... -> {content[:20]}..."
-            )
             return content, enhancer_model_name, used_preset_name
 
         except Exception as e:

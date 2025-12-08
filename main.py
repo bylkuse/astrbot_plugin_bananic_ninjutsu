@@ -1,6 +1,6 @@
 import asyncio
 from functools import wraps
-from typing import List, Tuple
+from typing import Tuple
 from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools
@@ -11,7 +11,6 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from .api_client import APIClient
 from .core.prompt import PromptManager
 from .core.stats import StatsManager
-from .core.images import ImageUtils
 from .core.config_mgr import (
     ConfigManager, 
     DictDataStrategy, 
@@ -62,8 +61,10 @@ class Ninjutsu(Star):
         conn_conf = self.conf.get("Connection_Config", {})
 
         raw_list = conn_conf.get("connection_presets")
-        self.connection_presets = ConfigSerializer.load_json_list(
-            raw_list, key_field="name"
+        self.connection_presets = await asyncio.to_thread(
+            ConfigSerializer.load_json_list,
+            raw_list,
+            key_field="name"
         )
         current_preset_name = conn_conf.get("current_preset_name")
         active_preset_data = self.connection_presets.get(current_preset_name)

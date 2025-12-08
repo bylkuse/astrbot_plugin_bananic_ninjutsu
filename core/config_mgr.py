@@ -76,6 +76,23 @@ class DataStrategy(ABC):
     async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
         pass
 
+    async def generic_rename(self, old_key: str, new_key: str, rename_logic: Callable[[str, str], None]) -> Tuple[bool, str]:
+        if old_key not in self.data:
+            return False, ResponsePresenter.item_not_found(self.item_name, old_key)
+        if new_key in self.data:
+            return False, f"❌ 重命名失败: {self.item_name} [{new_key}] 已存在。"
+
+        if self.item_name == "优化预设" and old_key == "default":
+             return False, "❌ 'default' 是系统保留的核心预设，禁止重命名。"
+
+        rename_logic(old_key, new_key)
+
+        if hasattr(self, 'save_callback') and self.save_callback:
+            await self.save_callback()
+        else:
+            await self.mgr.save_config()
+
+        return True, f"✅ 已将 {self.item_name} [{old_key}] 重命名为 [{new_key}]。"
 
 class DictDataStrategy(DataStrategy):
     def __init__(self, data: Dict[str, str], item_name: str, config_mgr, duplicate_type: str | None = None):
@@ -111,16 +128,9 @@ class DictDataStrategy(DataStrategy):
         return True, f"✅ 已删除 {self.item_name} [{key}]。"
 
     async def do_rename(self, old_key: str, new_key: str) -> Tuple[bool, str]:
-        if old_key not in self.data:
-            return False, ResponsePresenter.item_not_found(self.item_name, old_key)
-        if new_key in self.data:
-            return False, f"❌ 重命名失败: 目标名称 [{new_key}] 已存在。"
-        if self.item_name == "优化预设" and old_key == "default":
-            return False, "❌ 'default' 是系统保留的核心预设，禁止重命名。"
-
-        self.data[new_key] = self.data.pop(old_key)
-        await self.mgr.save_config()
-        return True, f"✅ 已将 {self.item_name} [{old_key}] 重命名为 [{new_key}]。"
+        def logic(o, n):
+            self.data[n] = self.data.pop(o)
+        return await self.generic_rename(old_key, new_key, logic)
 
     async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
         full_text = key + " " + " ".join(args) if args else key
@@ -263,7 +273,6 @@ class ConnectionStrategy(DataStrategy):
                 if "Connection_Config" not in self.raw_config: 
                     self.raw_config["Connection_Config"] = {}
                 self.raw_config["Connection_Config"]["current_preset_name"] = target
-                
                 self.gen_service.set_active_preset(self.data[target])
                 if self.save_callback: await self.save_callback()
                 else: await self.mgr.save_config()
@@ -333,25 +342,14 @@ class ConnectionStrategy(DataStrategy):
         return True, msg
 
     async def do_rename(self, old_key: str, new_key: str) -> Tuple[bool, str]:
-        if old_key not in self.data:
-            return False, ResponsePresenter.item_not_found(self.item_name, old_key)
-        if new_key in self.data:
-            return False, f"❌ 重命名失败: 连接预设 [{new_key}] 已存在。"
-
-        val = self.data.pop(old_key)
-        if isinstance(val, dict): val["name"] = new_key
-        self.data[new_key] = val
-
-        if self.gen_service.conn_config is val or self.raw_config.get("Connection_Config", {}).get("current_preset_name") == old_key:
-            if "Connection_Config" not in self.raw_config:
-                self.raw_config["Connection_Config"] = {}
-            self.raw_config["Connection_Config"]["current_preset_name"] = new_key
-            self.gen_service.set_active_preset(val)
-
-        if self.save_callback: await self.save_callback()
-        else: await self.mgr.save_config()
-
-        return True, f"✅ 已将 {self.item_name} [{old_key}] 重命名为 [{new_key}]。"
+        def logic(o, n):
+            val = self.data.pop(o)
+            if isinstance(val, dict): val["name"] = n
+            self.data[n] = val
+            if self.raw_config.get("Connection_Config", {}).get("current_preset_name") == o:
+                self.raw_config["Connection_Config"]["current_preset_name"] = n
+                self.gen_service.set_active_preset(val)
+        return await self.generic_rename(old_key, new_key, logic)
 
     async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
         if not args:
