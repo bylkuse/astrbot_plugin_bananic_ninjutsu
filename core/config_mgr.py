@@ -95,7 +95,8 @@ class DataStrategy(ABC):
         return True, f"✅ 已将 {self.item_name} [{old_key}] 重命名为 [{new_key}]。"
 
 class DictDataStrategy(DataStrategy):
-    def __init__(self, data: Dict[str, str], item_name: str, config_mgr, duplicate_type: str | None = None):
+    def __init__(self, data: Dict[str, str], item_name: str, config_mgr, duplicate_type: str | None = None, 
+        cmd_name: str = "lmp"):
         super().__init__(item_name, config_mgr)
         self.data = data
         self.dup_type = duplicate_type
