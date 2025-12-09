@@ -219,5 +219,24 @@
         "default": 5
       }
     }
+  },
+  "Recall_Config": {
+    "description": "消息撤回",
+    "type": "object",
+    "hint": "配置消息自动撤回策略",
+    "items": {
+      "enable_result_recall": {
+        "description": "自动撤回生成结果",
+        "type": "bool",
+        "hint": "开启后，生成的图片或报错信息将在指定时间后自动撤回。",
+        "default": false
+      },
+      "result_recall_time": {
+        "description": "结果撤回延迟(秒)",
+        "type": "int",
+        "hint": "生成结果发送后保留的时间。",
+        "default": 90
+      }
+    }
   }
 }
