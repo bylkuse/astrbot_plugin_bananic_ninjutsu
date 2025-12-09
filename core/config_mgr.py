@@ -38,14 +38,14 @@ class DataStrategy(ABC):
             if not args:
                 yield event.plain_result(f"❌ 格式错误: 请指定要删除的{self.item_name}名称。")
                 return
-            success, msg = await self.do_delete(args[0])
+            _, msg = await self.do_delete(args[0])
             if msg: yield event.plain_result(msg)
 
         elif sub_cmd == "ren":
             if len(args) < 2:
                 yield event.plain_result(f"❌ 格式错误: ren <旧名> <新名>")
                 return
-            success, msg = await self.do_rename(args[0], args[1])
+            _, msg = await self.do_rename(args[0], args[1])
             if msg: yield event.plain_result(msg)
 
         elif sub_cmd == "add":
@@ -83,7 +83,7 @@ class DataStrategy(ABC):
             return False, f"❌ 重命名失败: {self.item_name} [{new_key}] 已存在。"
 
         if self.item_name == "优化预设" and old_key == "default":
-             return False, "❌ 'default' 是系统保留的核心预设，禁止重命名。"
+            return False, "❌ 'default' 是系统保留的核心预设，禁止重命名。"
 
         rename_logic(old_key, new_key)
 

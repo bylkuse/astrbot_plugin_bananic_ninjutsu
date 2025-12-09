@@ -5,7 +5,6 @@ from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
-from astrbot.core.message.components import At
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .api_client import APIClient

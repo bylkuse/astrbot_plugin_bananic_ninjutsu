@@ -4,7 +4,6 @@ from typing import List, Any, Dict, Set
 from astrbot.api import logger
 from astrbot.core.message.components import Image, Plain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
-# 引入 MessageChain 用于手动构建消息
 from astrbot.core.message.message_event_result import MessageChain
 
 from ..api_client import APIClient, ApiRequestConfig, APIError, APIErrorType
