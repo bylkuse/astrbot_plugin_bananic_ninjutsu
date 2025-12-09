@@ -51,8 +51,17 @@ class GenerationService:
         group_id = event.get_group_id()
         display_prompt = prompt[:20] + "..." if len(prompt) > 20 else prompt
 
+        sz_val = params.get("image_size", "1K")
+        if sz_val is True: sz_val = "1K"
+        sz_str = str(sz_val).upper()
+        cost = 1
+        if "4K" in sz_str:
+            cost = 4
+        elif "2K" in sz_str:
+            cost = 2
+
         async with self.stats.transaction(
-            sender_id, group_id, self.conf, is_master
+            sender_id, group_id, self.conf, is_master, cost=cost
         ) as txn:
             if not txn.allowed:
                 msg = txn.reject_reason
@@ -65,6 +74,7 @@ class GenerationService:
 
             yield event.plain_result(ResponsePresenter.generating(display_prompt))
 
+            real_cost = cost if (txn._deducted_user or txn._deducted_group) else 0
             start_time = datetime.now()
 
             basic_conf = self.conf.get("Basic_Config", {})
@@ -94,7 +104,7 @@ class GenerationService:
                 debug_mode=debug_mode,
                 prompt=prompt,
                 image_bytes_list=images,
-                image_size=params.get("image_size", "1K"),
+                image_size=str(sz_val),
                 aspect_ratio=params.get("aspect_ratio", "default"),
                 enable_search=bool(params.get("google_search", False)),
                 enhancer_model_name=enhancer_model_name,
@@ -113,9 +123,7 @@ class GenerationService:
                 current_group_quota = self.stats.get_group_count(group_id) if group_id else 0
 
                 ar_val = params.get("aspect_ratio", "default")
-                sz_val = params.get("image_size", "1K")
                 if ar_val is True: ar_val = "default"
-                if sz_val is True: sz_val = "default"
 
                 caption = ResponsePresenter.generation_success(
                     elapsed=elapsed,
@@ -129,7 +137,8 @@ class GenerationService:
                     image_size=str(sz_val),
                     user_quota=current_user_quota,
                     group_quota=current_group_quota,
-                    is_group=bool(group_id)
+                    is_group=bool(group_id),
+                    cost=real_cost
                 )
 
                 result_chain = []

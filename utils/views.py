@@ -103,7 +103,8 @@ class ResponsePresenter:
         image_size: str = "default",
         user_quota: int = 0,
         group_quota: int = 0,
-        is_group: bool = False
+        is_group: bool = False,
+        cost: int = 1
     ) -> str:
         # 模型
         clean_gen_model = model_name.split("/")[-1] if "/" in model_name else model_name
@@ -131,7 +132,7 @@ class ResponsePresenter:
         ar = aspect_ratio if aspect_ratio != "default" else "自动"
         sz = image_size if image_size != "default" else "默认"
         specs = f"📐 {ar} · 📏 {sz}"
-        quota_str = f"👤 {user_quota}"
+        quota_str = f"-{cost} 👤 {user_quota}"
         if is_group:
             quota_str += f" · 👥 {group_quota}"
         line4 = f"{specs} | 💳 {quota_str}"

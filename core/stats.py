@@ -20,6 +20,7 @@ class PermissionTransaction:
     _is_failed: bool = False
     _fail_reason: str = ""
     exhausted: bool = False
+    cost: int = 1
 
     def mark_failed(self, reason: str):
         self._is_failed = True
@@ -204,8 +205,9 @@ class StatsManager:
         group_id: str | None,
         config: Dict[str, Any],
         is_admin: bool = False,
+        cost: int = 1
     ):
-        txn = PermissionTransaction()
+        txn = PermissionTransaction(cost=cost)
         perm_conf = config.get("Permission_Config", {})
 
         if is_admin:
@@ -256,30 +258,30 @@ class StatsManager:
         user_limit_on = perm_conf.get("enable_user_limit", True)
         group_limit_on = perm_conf.get("enable_group_limit", False) and group_id
 
-        has_user = not user_limit_on or user_cnt > 0
-        has_group = not group_limit_on or group_cnt > 0
+        has_user = not user_limit_on or user_cnt >= cost
+        has_group = not group_limit_on or group_cnt >= cost
 
         if group_id:
             if not has_group and not has_user:
                 txn.allowed = False
-                txn.reject_reason = "❌ 本群次数与您的个人次数均已用尽。"
+                txn.reject_reason = f"❌ 次数不足 (需要 {cost} 次)。"
                 txn.exhausted = True
                 yield txn
                 self._remove_rate_limit_record(group_id)
                 return
         elif not has_user:
             txn.allowed = False
-            txn.reject_reason = "❌ 您的使用次数已用完。"
+            txn.reject_reason = f"❌ 您的次数不足 (需要 {cost} 次)。"
             txn.exhausted = True
             yield txn
             return
 
         try:
-            if group_limit_on and group_cnt > 0:
-                await self.modify_group_count(group_id, -1)
+            if group_limit_on and group_cnt >= cost:
+                await self.modify_group_count(group_id, -cost)
                 txn._deducted_group = True
-            elif user_limit_on and user_cnt > 0:
-                await self.modify_user_count(user_id, -1)
+            elif user_limit_on and user_cnt >= cost:
+                await self.modify_user_count(user_id, -cost)
                 txn._deducted_user = True
 
             txn.allowed = True
@@ -292,9 +294,9 @@ class StatsManager:
         finally:
             if txn._is_failed:
                 if txn._deducted_group and group_id:
-                    await self.modify_group_count(group_id, 1)
+                    await self.modify_group_count(group_id, txn.cost)
                 if txn._deducted_user:
-                    await self.modify_user_count(user_id, 1)
+                    await self.modify_user_count(user_id, txn.cost)
                 if group_id:
                     self._remove_rate_limit_record(group_id)
             elif txn.allowed:
