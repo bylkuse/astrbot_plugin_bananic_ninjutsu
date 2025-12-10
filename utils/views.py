@@ -106,20 +106,17 @@ class ResponsePresenter:
         is_group: bool = False,
         cost: int = 1
     ) -> str:
-        # 模型
         clean_gen_model = model_name.split("/")[-1] if "/" in model_name else model_name
-        line1 = f"🚀 [{conn_name}] {clean_gen_model}"
+        line1 = f"🚀 {clean_gen_model}"
         if enhancer_model:
             clean_enhancer = enhancer_model.split("/")[-1] if "/" in enhancer_model else enhancer_model
             line1 += f" (+{clean_enhancer})"
 
-        # 预设&时间
         display_strategy = gen_preset_name if gen_preset_name else "自定义"
         if enhancer_preset and enhancer_preset != "default":
             display_strategy += f" ({enhancer_preset})"
-        line2 = f"🎨 {display_strategy} · ⏱️{elapsed:.1f}s"
+        line2 = f"🔌 [{conn_name}] · 🎨 {display_strategy} · ⏱️{elapsed:.1f}s"
 
-        # 提示词预览
         clean_prompt = prompt.replace("\n", " ").strip()
         limit = 25
         if len(clean_prompt) > limit:
@@ -128,14 +125,13 @@ class ResponsePresenter:
             preview = clean_prompt
         line3 = f"📝 {preview}"
 
-        # 规格&额度
         ar = aspect_ratio if aspect_ratio != "default" else "自动"
         sz = image_size if image_size != "default" else "默认"
         specs = f"📐 {ar} · 📏 {sz}"
         quota_str = f"-{cost} 👤 {user_quota}"
         if is_group:
             quota_str += f" · 👥 {group_quota}"
-        line4 = f"{specs} | 💳 {quota_str}"
+        line4 = f"{specs}\n💳 {quota_str}"
 
         return "\n".join([line1, line2, line3, line4])
 
