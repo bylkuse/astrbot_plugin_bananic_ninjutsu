@@ -249,19 +249,19 @@ class GenerationService:
                 elapsed = (datetime.now() - start_time).total_seconds()
 
                 if e.error_type == APIErrorType.DEBUG_INFO:
-                    txn.mark_failed("调试模式")
+                    txn.mark_failed()
                     msg = ResponsePresenter.debug_info(e.data, elapsed)
                     await self._send_message(event, event.plain_result(msg))
                     return
 
-                txn.mark_failed(f"{e.error_type.name}: {e.raw_message}")
+                txn.mark_failed()
                 error_msg = ResponsePresenter.api_error_message(e, is_master, self.main_prefix)
                 final_msg_id = await self._send_message(event, event.plain_result(error_msg))
                 await self._schedule_result_recall(event.bot, final_msg_id)
 
             except Exception as e:
                 await self._cleanup_process_msgs(event.bot, process_msg_ids)
-                txn.mark_failed(str(e))
+                txn.mark_failed()
                 elapsed = (datetime.now() - start_time).total_seconds()
                 final_msg_id = await self._send_message(event, event.plain_result(f"❌ 系统内部错误: {e}"))
                 await self._schedule_result_recall(event.bot, final_msg_id)

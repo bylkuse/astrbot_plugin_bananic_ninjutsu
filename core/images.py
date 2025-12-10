@@ -26,7 +26,7 @@ class ImageUtils:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    async def clean_cache(retention_seconds: int = 86400): # 1. 改为 async def
+    async def clean_cache(retention_seconds: int = 86400):
         if not CACHE_DIR.exists():
             return
 

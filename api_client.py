@@ -1,8 +1,10 @@
 import asyncio
 import base64
 import io
+import json
 import re
 import time
+import random
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Tuple
@@ -77,14 +79,14 @@ class GenResult:
 
 
 class BaseGenerationProvider(ABC):
-    """提供商基类"""
     _ERROR_MAPPING = [
-        ({400}, {"invalid_argument", "bad request"}, APIErrorType.INVALID_ARGUMENT, False),
-        ({401, 403}, {"unauthenticated", "permission", "access denied", "invalid api key"}, APIErrorType.AUTH_FAILED, True),
+        ({400}, {"invalid_argument", "bad request", "parse error"}, APIErrorType.INVALID_ARGUMENT, False),
+        ({401, 403}, {"unauthenticated", "permission", "access denied", "invalid api key", "signature"}, APIErrorType.AUTH_FAILED, True),
         ({402}, {"billing", "payment", "quota"}, APIErrorType.QUOTA_EXHAUSTED, True),
-        ({404}, {"not found"}, APIErrorType.NOT_FOUND, False),
+        ({404}, {"not found", "404"}, APIErrorType.NOT_FOUND, False),
         ({429}, {"resource_exhausted", "too many requests", "rate limit"}, APIErrorType.RATE_LIMIT, True),
-        (set(range(500, 600)), {"internal error", "server error", "timeout", "connect", "ssl", "503", "500"}, APIErrorType.SERVER_ERROR, True),
+        (set(range(500, 600)), {"internal error", "server error", "timeout", "connect", "ssl", "503", "502", "504", "overloaded"}, APIErrorType.SERVER_ERROR, True),
+        (set(), {"safety", "blocked", "content filter"}, APIErrorType.SAFETY_BLOCK, False),
     ]
 
     def __init__(self, session: aiohttp.ClientSession):
@@ -95,10 +97,15 @@ class BaseGenerationProvider(ABC):
         pass
 
     def analyze_exception(self, e: Exception) -> Tuple[APIError, bool]:
+        if isinstance(e, APIError):
+            for _, _, error_type, should_switch in self._ERROR_MAPPING:
+                if error_type == e.error_type:
+                    return e, should_switch
+            return e, False
+
         error_str = str(e)[:1000].lower()
         status_code = None
 
-        # 提取状态码
         for attr in ["status_code", "code", "status", "http_code", "http_status"]:
             val = getattr(e, attr, None)
             if isinstance(val, int):
@@ -108,7 +115,11 @@ class BaseGenerationProvider(ABC):
                 status_code = int(val)
                 break
 
-        # 匹配映射表
+        if isinstance(e, asyncio.TimeoutError):
+            return APIError(APIErrorType.SERVER_ERROR, f"请求超时: {str(e)}", 408), True
+        if isinstance(e, aiohttp.ClientError):
+            return APIError(APIErrorType.SERVER_ERROR, f"网络连接错误: {str(e)}"), True
+
         for codes, keywords, error_type, should_switch_key in self._ERROR_MAPPING:
             code_match = status_code in codes if status_code else False
             keyword_match = any(k in error_str for k in keywords)
@@ -116,7 +127,7 @@ class BaseGenerationProvider(ABC):
             if code_match or keyword_match:
                 return APIError(error_type, str(e), status_code), should_switch_key
 
-        return APIError(APIErrorType.UNKNOWN, str(e), status_code), False
+        return APIError(APIErrorType.UNKNOWN, f"未知错误: {str(e)}", status_code), False
 
 
 class GoogleProvider(BaseGenerationProvider):
@@ -234,6 +245,71 @@ class GoogleProvider(BaseGenerationProvider):
 
 
 class OpenAIProvider(BaseGenerationProvider):
+    @staticmethod
+    def _validate_and_normalize_b64(raw_data: str) -> str:
+        # 基础清洗
+        cleaned = (raw_data or "").strip().replace("\n", "").replace("\r", "")
+        # 去前缀
+        if ";base64," in cleaned:
+            _, _, cleaned = cleaned.partition(";base64,")
+        # 标准解码
+        def try_decode(data: str) -> str:
+            base64.b64decode(data, validate=True)
+            return data
+        try:
+            return try_decode(cleaned)
+        except Exception:
+            pass
+        # URL-safe Base64 & Padding
+        alt = cleaned.replace("-", "+").replace("_", "/")
+        pad_len = (-len(alt)) % 4
+        if pad_len:
+            alt += "=" * pad_len
+        try:
+            return try_decode(alt)
+        except Exception:
+            pass
+        # 正则重组
+        relaxed = re.sub(r"[^A-Za-z0-9+/=]", "", cleaned)
+        pad_len2 = (-len(relaxed)) % 4
+        if pad_len2:
+            relaxed += "=" * pad_len2
+        return relaxed
+
+    @staticmethod
+    def _resolve_endpoint(base_url: str) -> str:
+        url = (base_url or "").strip().rstrip("/")
+        if not url:
+            return "https://api.openai.com/v1/chat/completions"
+        if url.endswith("/chat/completions"):
+            return url
+        if re.search(r"/v1(?:beta)?$", url):
+            return f"{url}/chat/completions"
+        return f"{url}/v1/chat/completions"
+
+    def _parse_sse_response(self, raw_text: str) -> Dict[str, Any]:
+        events = []
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                json_str = line[5:].strip()
+                if json_str == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(json_str)
+                    if isinstance(event, dict):
+                        events.append(event)
+                except json.JSONDecodeError:
+                    continue
+        if not events:
+            raise APIError(APIErrorType.SERVER_ERROR, f"无法解析 SSE 响应: {raw_text[:200]}")
+        for event in reversed(events):
+            if event.get("choices") or event.get("data"):
+                return event
+        return events[-1]
+
     async def generate(self, api_key: str, config: 'ApiRequestConfig', images: List[bytes]) -> 'GenResult':
         headers = {
             "Content-Type": "application/json",
@@ -241,7 +317,6 @@ class OpenAIProvider(BaseGenerationProvider):
         }
 
         content_list = [{"type": "text", "text": config.prompt}]
-
         for img_data in images:
             img_b64 = base64.b64encode(img_data).decode("utf-8")
             content_list.append({
@@ -253,25 +328,42 @@ class OpenAIProvider(BaseGenerationProvider):
             "model": config.model,
             "max_tokens": 1500,
             "messages": [{"role": "user", "content": content_list}],
+            "stream": False,
         }
+        target_url = self._resolve_endpoint(config.api_base)
 
         logger.info(f"调用 OpenAI 兼容接口: {config.model} @ {config.api_base}")
-
         raw_image_bytes = None
 
         try:
             async with self.session.post(
-                config.api_base,
+                target_url,
                 json=payload,
                 headers=headers,
                 proxy=config.proxy_url,
                 timeout=120,
             ) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise Exception(f"HTTP {resp.status}: {text[:200]}")
+                response_text = await resp.text()
 
-                data = await resp.json()
+                if resp.status != 200:
+                    try:
+                        err_data = json.loads(response_text)
+                        if "error" in err_data:
+                            msg = err_data["error"].get("message", str(err_data))
+                            raise Exception(f"OpenAI API Error: {msg}")
+                    except json.JSONDecodeError:
+                        pass
+                    raise Exception(f"HTTP {resp.status}: {response_text[:200]}")
+
+                try:
+                    data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    content_type = resp.headers.get("Content-Type", "").lower()
+                    if "text/event-stream" in content_type or response_text.strip().startswith("data:"):
+                        logger.debug("检测到 SSE 流式响应，正在进行兼容性解析...")
+                        data = self._parse_sse_response(response_text)
+                    else:
+                        raise APIError(APIErrorType.SERVER_ERROR, f"无效的 JSON 响应: {response_text[:200]}")
 
             if "error" in data:
                 err_msg = str(data["error"].get("message", data["error"]))
@@ -288,10 +380,15 @@ class OpenAIProvider(BaseGenerationProvider):
                                 item["b64_json"] = "b64_image_data_hidden_len_" + str(len(item["b64_json"]))
                 debug_json = ConfigSerializer.serialize_pretty(log_data)
                 logger.error(f"OpenAI 响应解析失败，无法提取图片 URL。\n完整响应数据:\n{debug_json}")
-                raise APIError(APIErrorType.UNKNOWN, "API响应中未找到有效的图片地址 (详情已记录到日志)")
+                raise APIError(APIErrorType.UNKNOWN, "API响应中未找到有效的图片地址")
 
-            if image_url.startswith("data:image/"):
-                raw_image_bytes = base64.b64decode(image_url.split(",", 1)[1])
+            if image_url.startswith("data:image/") or ";base64," in image_url or not image_url.startswith("http"):
+                try:
+                    normalized_b64 = self._validate_and_normalize_b64(image_url)
+                    raw_image_bytes = base64.b64decode(normalized_b64)
+                except Exception as e:
+                    logger.error(f"Base64 解码失败: {e}")
+                    raise APIError(APIErrorType.SERVER_ERROR, "图片数据 Base64 解码失败")
             else:
                 raw_image_bytes = await ImageUtils.download_image(
                     image_url, proxy=config.proxy_url, session=self.session
@@ -312,7 +409,7 @@ class OpenAIProvider(BaseGenerationProvider):
         return GenResult(image=final_bytes)
 
     def _extract_image_url(self, data: Dict[str, Any]) -> str | None:
-        # Image Generation
+        # 标准DALL-E
         if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
             item = data["data"][0]
             if "url" in item:
@@ -321,10 +418,11 @@ class OpenAIProvider(BaseGenerationProvider):
                 return f"data:image/png;base64,{item['b64_json']}"
 
         # Chat Completion
+        content = ""
         if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
             message = data["choices"][0].get("message", {})
 
-            # 中转/本地API格式
+            # 中转/本地API
             if "images" in message and isinstance(message["images"], list) and message["images"]:
                 img_obj = message["images"][0]
                 if isinstance(img_obj, dict):
@@ -332,15 +430,30 @@ class OpenAIProvider(BaseGenerationProvider):
                 if isinstance(img_obj, str):
                     return img_obj
 
-            # content解析
             content = message.get("content", "")
-            if content and isinstance(content, str):
-                md_match = re.search(r'!\[.*?\]\((https?://[^\)]+)\)', content)
-                if md_match:
-                    return md_match.group(1).strip()
-                url_match = re.search(r'(https?://[^\s<>"\'\)]+)', content)
-                if url_match:
-                    return url_match.group(1).strip()
+
+        # content解析
+        if content and isinstance(content, str):
+            # MD图片
+            md_match = re.search(r"!\[.*?\]\((https?://[^\)]+)\)", content)
+            if md_match:
+                return md_match.group(1).strip()
+            # MD Data URI
+            md_data_match = re.search(r"!\[.*?\]\((data:image/[^\)]+)\)", content)
+            if md_data_match:
+                return md_data_match.group(1).strip()
+            # HTTP(S)
+            url_match = re.search(r"(https?://[^\s)]+\.(?:png|jpe?g|gif|webp|bmp|tiff|avif))", content, re.IGNORECASE)
+            if url_match:
+                return url_match.group(1).strip()
+            # Data URI
+            data_uri_match = re.search(
+                r"(data:image/[a-zA-Z0-9.+-]+;\s*base64\s*,\s*[-A-Za-z0-9+/=_\s]+)", 
+                content
+            )
+            if data_uri_match:
+                return data_uri_match.group(1).strip()
+
         return None
 
 
@@ -476,13 +589,13 @@ class APIClient:
                 "image_count": len(processed_images),
                 "enhancer_model": config.enhancer_model_name,
                 "enhancer_preset": config.enhancer_preset,
-                "thinking": config.thinking,
             }
             raise APIError(APIErrorType.DEBUG_INFO, "调试模式阻断", data=debug_data)
 
         last_error = None
-        max_attempts = min(len(config.api_keys), 5)
-        if max_attempts < 1: max_attempts = 1
+        max_attempts = max(1, min(len(config.api_keys), 5))
+        base_delay = 1.5
+        max_delay = 10.0
 
         for attempt in range(max_attempts):
             api_key = await self._get_valid_api_key(config.api_keys)
@@ -491,32 +604,52 @@ class APIClient:
                 provider = self._get_provider(config.api_type)
                 return await provider.generate(api_key, config, processed_images)
 
-            except APIError as e:
-                if e.error_type in [
+            except Exception as e:
+                if isinstance(e, APIError):
+                    error = e
+                else:
+                    try:
+                        provider = self._get_provider(config.api_type)
+                        error, _ = provider.analyze_exception(e)
+                    except Exception:
+                        error = APIError(APIErrorType.UNKNOWN, str(e))
+
+                last_error = error
+
+                if error.error_type in [
                     APIErrorType.SAFETY_BLOCK,
                     APIErrorType.INVALID_ARGUMENT,
+                    APIErrorType.NOT_FOUND,
                     APIErrorType.DEBUG_INFO,
                 ]:
-                    raise e
+                    logger.warning(f"API 请求遇到致命错误，停止重试: {error.error_type.name} - {error.raw_message}")
+                    raise error
 
-                last_error = e
                 logger.warning(
-                    f"API请求失败 (Attempt {attempt + 1}/{max_attempts}) - Key: ...{api_key[-6:]} - Error: {e.error_type.name}"
+                    f"API请求失败 (Attempt {attempt + 1}/{max_attempts}) "
+                    f"- Key: ...{api_key[-6:]} "
+                    f"- Type: {error.error_type.name} "
+                    f"- Msg: {error.raw_message[:100]}"
                 )
 
-                if e.error_type == APIErrorType.RATE_LIMIT:
+                if error.error_type == APIErrorType.RATE_LIMIT:
                     self._mark_key_failed(api_key, duration=60)
-                elif e.error_type in [APIErrorType.AUTH_FAILED, APIErrorType.QUOTA_EXHAUSTED]:
+                elif error.error_type in [APIErrorType.AUTH_FAILED, APIErrorType.QUOTA_EXHAUSTED]:
                     self._mark_key_failed(api_key, duration=300)
 
                 if attempt == max_attempts - 1:
                     break
-                continue
 
-            except Exception as e:
-                logger.error(f"未捕获的异常: {e}", exc_info=True)
-                last_error = APIError(APIErrorType.UNKNOWN, str(e))
-                break
+                # 指数退避+随机抖动
+                if error.error_type in [APIErrorType.RATE_LIMIT, APIErrorType.SERVER_ERROR]:
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    jitter = random.uniform(0, 1)
+                    actual_delay = delay + jitter
+                    logger.debug(f"触发指数退避: 等待 {actual_delay:.2f}s 后重试...")
+                    await asyncio.sleep(actual_delay)
+                else:
+                    await asyncio.sleep(0.5)
+                continue
 
         if last_error:
             raise last_error

@@ -22,10 +22,8 @@ class PermissionTransaction:
     exhausted: bool = False
     cost: int = 1
 
-    def mark_failed(self, reason: str):
+    def mark_failed(self):
         self._is_failed = True
-        self._fail_reason = reason
-
 
 @dataclass
 class CheckInResult:
@@ -288,7 +286,7 @@ class StatsManager:
             yield txn
 
         except Exception as e:
-            txn.mark_failed(str(e))
+            txn.mark_failed()
             raise e
 
         finally:
