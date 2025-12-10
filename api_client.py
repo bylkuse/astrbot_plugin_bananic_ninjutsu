@@ -95,7 +95,7 @@ class BaseGenerationProvider(ABC):
         pass
 
     def analyze_exception(self, e: Exception) -> Tuple[APIError, bool]:
-        error_str = str(e).lower()
+        error_str = str(e)[:1000].lower()
         status_code = None
 
         # 提取状态码

@@ -9,6 +9,7 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .api_client import APIClient
 from .core.prompt import PromptManager
+from .core.images import ImageUtils
 from .core.stats import StatsManager
 from .core.config_mgr import (
     ConfigManager, 
@@ -55,6 +56,7 @@ class Ninjutsu(Star):
         self.generation_service: GenerationService | None = None
 
     async def initialize(self):
+        asyncio.create_task(ImageUtils.clean_cache(retention_seconds=86400))
         await self.stats.load_all_data()
         await self.pm.load_prompts()
         conn_conf = self.conf.get("Connection_Config", {})

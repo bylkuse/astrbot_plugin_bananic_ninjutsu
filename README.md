@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.1.3-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.1.5-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -288,14 +288,14 @@
 
 **欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
 ### 第一序列
-* ~~撤回功能~~（生成后撤回等待词，定时撤回图片）
+* ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
 * ~~完成内置优化预设~~
 * ~~写一份正式的readme~~
 ### 第二序列
 参考 piexian/astrbot_plugin_gemini_image_generation 引入先进处理：
 * 添加gemini的openai方式作为fallback
 * OpenAI 兼容接口下的传参
-* 为头像获取引入备用方法
+* ~~为头像获取引入备用方法~~
 * 视觉裁切
 ### 第三序列（瞎想！不一定能做也不一定会做）
 * 引入api支持，作为变量或输入图
