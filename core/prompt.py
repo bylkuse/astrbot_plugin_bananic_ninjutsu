@@ -279,9 +279,8 @@ class PromptManager:
             used_preset_name = instruction_key
         else:
             system_instruction = (
-                "You are a helpful AI assistant for image generation. "
-                "Your task is to modify the User's original prompt according to their specific requirements. "
-                "Maintain the core subject of the original prompt unless asked to change it. "
+                "身份：你是一名专业的提示词工程师"
+                "任务：分析需求，重写以提升提示词质量（精确、稳定、可复现）"
             )
             user_content_template = (
                 "Original Prompt: {prompt}\n"
@@ -318,7 +317,7 @@ class PromptManager:
 
         try:
             full_prompt = user_content_template.format(prompt=original_prompt)
-            full_prompt += " Directly output the final prompt without explanation."
+            full_prompt += " 总则:\n* 沿用提示词原来的language，使用自然语言&叙述性段落，而非关键词\n* 分步引导复杂场景（如：首先，创作一幅...背景；然后，在前景中添加...；最后，在...上放置...）\n* （关键）直接输出优化后的最终提示词，无需解释"
 
             p_name = getattr(provider, "id", None) or type(provider).__name__
             logger.info(f"正在调用 LLM ({p_name}) 进行提示词优化...")
