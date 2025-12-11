@@ -12,7 +12,7 @@ from ..core.prompt import PromptManager
 from ..core.images import ImageUtils
 from ..utils.views import ResponsePresenter
 from ..utils.parser import ParsedCommand
-
+from ..utils.result import Ok, Err
 
 class GenerationService:
     MAX_IMAGE_COUNT = 5
@@ -204,67 +204,52 @@ class GenerationService:
             )
 
             final_msg_id = None
+            result = await self.api_client.generate_content(request_config)
+            await self._cleanup_process_msgs(event.bot, process_msg_ids)
+            elapsed = (datetime.now() - start_time).total_seconds()
 
-            try:
-                gen_result = await self.api_client.generate_content(request_config)
-                await self._cleanup_process_msgs(event.bot, process_msg_ids)
+            match result:
+                case Ok(gen_data): 
+                    image_data = gen_data.image
+                    thoughts = gen_data.thoughts
+                    current_user_quota = self.stats.get_user_count(sender_id)
+                    current_group_quota = self.stats.get_group_count(group_id) if group_id else 0
+                    ar_val = params.get("aspect_ratio", "default")
+                    if ar_val is True: ar_val = "default"
 
-                image_data = gen_result.image
-                thoughts = gen_result.thoughts
+                    caption = ResponsePresenter.generation_success(
+                        elapsed=elapsed,
+                        conn_name=self.conn_config.get("name", "Unknown"),
+                        model_name=self.conn_config.get("model", "Unknown"),
+                        gen_preset_name=gen_preset_name,
+                        prompt=prompt,
+                        enhancer_model=enhancer_model_name,
+                        enhancer_preset=enhancer_preset,
+                        aspect_ratio=str(ar_val),
+                        image_size=str(sz_val),
+                        user_quota=current_user_quota,
+                        group_quota=current_group_quota,
+                        is_group=bool(group_id),
+                        cost=real_cost
+                    )
 
-                elapsed = (datetime.now() - start_time).total_seconds()
-                current_user_quota = self.stats.get_user_count(sender_id)
-                current_group_quota = self.stats.get_group_count(group_id) if group_id else 0
+                    result_chain = []
+                    if thoughts:
+                        result_chain.append(Plain(f"🧐 思考过程:\n{thoughts}\n\n"))
+                    result_chain.append(Image.fromBytes(image_data))
+                    result_chain.append(Plain(caption))
+                    final_msg_id = await self._send_message(event, event.chain_result(result_chain))
+                    await self._schedule_result_recall(event.bot, final_msg_id)
 
-                ar_val = params.get("aspect_ratio", "default")
-                if ar_val is True: ar_val = "default"
-
-                caption = ResponsePresenter.generation_success(
-                    elapsed=elapsed,
-                    conn_name=self.conn_config.get("name", "Unknown"),
-                    model_name=self.conn_config.get("model", "Unknown"),
-                    gen_preset_name=gen_preset_name,
-                    prompt=prompt,
-                    enhancer_model=enhancer_model_name,
-                    enhancer_preset=enhancer_preset,
-                    aspect_ratio=str(ar_val),
-                    image_size=str(sz_val),
-                    user_quota=current_user_quota,
-                    group_quota=current_group_quota,
-                    is_group=bool(group_id),
-                    cost=real_cost
-                )
-
-                result_chain = []
-                if thoughts:
-                    result_chain.append(Plain(f"🧐 思考过程:\n{thoughts}\n\n"))
-                result_chain.append(Image.fromBytes(image_data))
-                result_chain.append(Plain(caption))
-                final_msg_id = await self._send_message(event, event.chain_result(result_chain))
-                await self._schedule_result_recall(event.bot, final_msg_id)
-
-            except APIError as e:
-                await self._cleanup_process_msgs(event.bot, process_msg_ids)
-
-                elapsed = (datetime.now() - start_time).total_seconds()
-
-                if e.error_type == APIErrorType.DEBUG_INFO:
+                case Err(error):
                     txn.mark_failed()
-                    msg = ResponsePresenter.debug_info(e.data, elapsed)
-                    await self._send_message(event, event.plain_result(msg))
-                    return
-
-                txn.mark_failed()
-                error_msg = ResponsePresenter.api_error_message(e, is_master, self.main_prefix)
-                final_msg_id = await self._send_message(event, event.plain_result(error_msg))
-                await self._schedule_result_recall(event.bot, final_msg_id)
-
-            except Exception as e:
-                await self._cleanup_process_msgs(event.bot, process_msg_ids)
-                txn.mark_failed()
-                elapsed = (datetime.now() - start_time).total_seconds()
-                final_msg_id = await self._send_message(event, event.plain_result(f"❌ 系统内部错误: {e}"))
-                await self._schedule_result_recall(event.bot, final_msg_id)
+                    if error.error_type == APIErrorType.DEBUG_INFO:
+                        msg = ResponsePresenter.debug_info(error.data, elapsed)
+                        await self._send_message(event, event.plain_result(msg))
+                        return
+                    error_msg = ResponsePresenter.api_error_message(error, is_master, self.main_prefix)
+                    final_msg_id = await self._send_message(event, event.plain_result(error_msg))
+                    await self._schedule_result_recall(event.bot, final_msg_id)
 
     async def run_generation_workflow(
         self,

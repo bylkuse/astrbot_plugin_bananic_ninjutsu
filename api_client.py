@@ -28,6 +28,7 @@ except ImportError:
 
 from .core.images import ImageUtils
 from .utils.serializer import ConfigSerializer
+from .utils.result import Result, Ok, Err
 
 
 class APIErrorType(Enum):
@@ -380,7 +381,7 @@ class OpenAIProvider(BaseGenerationProvider):
                                 item["b64_json"] = "b64_image_data_hidden_len_" + str(len(item["b64_json"]))
                 debug_json = ConfigSerializer.serialize_pretty(log_data)
                 logger.error(f"OpenAI 响应解析失败，无法提取图片 URL。\n完整响应数据:\n{debug_json}")
-                raise APIError(APIErrorType.UNKNOWN, "API响应中未找到有效的图片地址")
+                raise APIError(APIErrorType.SERVER_ERROR, "API响应中未找到有效的图片地址") #小香蕉会抽风，标记为可重试
 
             if image_url.startswith("data:image/") or ";base64," in image_url or not image_url.startswith("http"):
                 try:
@@ -575,11 +576,16 @@ class APIClient:
 
         return valid_images
 
-    async def generate_content(self, config: ApiRequestConfig) -> GenResult:
+    async def generate_content(self, config: ApiRequestConfig) -> Result[GenResult, APIError]:
         if not config.api_keys:
-            raise APIError(APIErrorType.AUTH_FAILED, "未配置有效的 API Key")
+            return Err(APIError(APIErrorType.AUTH_FAILED, "未配置有效的 API Key"))
 
-        processed_images = await self._process_and_validate_images(config)
+        try:
+            processed_images = await self._process_and_validate_images(config)
+        except Exception as e:
+            if isinstance(e, APIError):
+                return Err(e)
+            return Err(APIError(APIErrorType.INVALID_ARGUMENT, f"图片处理失败: {str(e)}"))
 
         if config.debug_mode:
             debug_data = {
@@ -590,7 +596,7 @@ class APIClient:
                 "enhancer_model": config.enhancer_model_name,
                 "enhancer_preset": config.enhancer_preset,
             }
-            raise APIError(APIErrorType.DEBUG_INFO, "调试模式阻断", data=debug_data)
+            return Err(APIError(APIErrorType.DEBUG_INFO, "调试模式阻断", data=debug_data))
 
         last_error = None
         max_attempts = max(1, min(len(config.api_keys), 5))
@@ -598,11 +604,15 @@ class APIClient:
         max_delay = 10.0
 
         for attempt in range(max_attempts):
-            api_key = await self._get_valid_api_key(config.api_keys)
+            try:
+                api_key = await self._get_valid_api_key(config.api_keys)
+            except APIError as e:
+                return Err(e)
 
             try:
                 provider = self._get_provider(config.api_type)
-                return await provider.generate(api_key, config, processed_images)
+                result = await provider.generate(api_key, config, processed_images)
+                return Ok(result)
 
             except Exception as e:
                 if isinstance(e, APIError):
@@ -622,8 +632,8 @@ class APIClient:
                     APIErrorType.NOT_FOUND,
                     APIErrorType.DEBUG_INFO,
                 ]:
-                    logger.warning(f"API 请求遇到致命错误，停止重试: {error.error_type.name} - {error.raw_message}")
-                    raise error
+                    logger.warning(f"API 致命错误: {error.raw_message}")
+                    return Err(error)
 
                 logger.warning(
                     f"API请求失败 (Attempt {attempt + 1}/{max_attempts}) "
@@ -652,6 +662,6 @@ class APIClient:
                 continue
 
         if last_error:
-            raise last_error
+            return Err(last_error)
         else:
-            raise APIError(APIErrorType.UNKNOWN, "请求流程异常结束，未产生结果")
+            return Err(APIError(APIErrorType.UNKNOWN, "所有重试均失败，且无明确错误信息"))
