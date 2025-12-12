@@ -344,6 +344,7 @@ astrbot_plugin_bananic_ninjutsu/
 │   ├── parser.py             # 参数系统
 │   ├── serializer.py         # 序列化&反序列化
 │   ├── result.py             # Result容器
+│   ├── zai.py                # zAI token
 │   └── views.py              # 视图&提示信息
 ├── _conf_schema.json     # 配置文件模板
 ├── metadata.yaml         # 注册信息

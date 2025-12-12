@@ -41,7 +41,7 @@ class Ninjutsu(Star):
         self.conf = config
         self.plugin_data_dir = StarTools.get_data_dir()
 
-        raw_prefixes = self.context.get_config().get("command_prefixes", ["/"])
+        raw_prefixes = self.context.get_config().get("wake_prefix", ["/"])
         if isinstance(raw_prefixes, str):
             raw_prefixes = [raw_prefixes]
         if "#" not in raw_prefixes:
