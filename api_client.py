@@ -330,6 +330,41 @@ class OpenAIProvider(BaseGenerationProvider):
             simulated_response.update({k: v for k, v in last_valid_event.items() if k not in ["choices"]})
         return simulated_response
 
+    async def _stream_generate(self, session, url, payload, headers, proxy, timeout) -> str:
+        """防CF-524超时"""
+        payload["stream"] = True
+        full_content = ""
+        async with session.post(url, json=payload, headers=headers, proxy=proxy, timeout=timeout) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise APIError(APIErrorType.SERVER_ERROR, f"Stream Init Failed: {resp.status} - {text}", status_code=resp.status)
+
+            async for line in resp.content:
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith(b"data: "):
+                    line = line[6:]
+
+                if line == b"[DONE]":
+                    break
+
+                try:
+                    chunk_json = json.loads(line)
+                    if "choices" in chunk_json and len(chunk_json["choices"]) > 0:
+                        delta = chunk_json["choices"][0].get("delta", {})
+                        content_piece = delta.get("content", "")
+                        if content_piece:
+                            full_content += content_piece
+                except json.JSONDecodeError:
+                    continue
+
+        if not full_content:
+            raise APIError(APIErrorType.SERVER_ERROR, "Stream completed but no content received")
+
+        return full_content
+
     async def generate(self, api_key: str, config: 'ApiRequestConfig', images: List[bytes]) -> 'GenResult':
         request_api_key = api_key
         if config.api_type.lower() == "zai":
@@ -390,15 +425,37 @@ class OpenAIProvider(BaseGenerationProvider):
             payload["max_tokens"] = 1500
 
         target_url = self._resolve_endpoint(config.api_base)
+
         debug_payload = payload.copy()
         if "messages" in debug_payload:
             debug_payload["messages"] = "[(Hidden content with Base64 images)]"
-        # 隐藏Key日志
+        
         masked_key = request_api_key[:6] + "..." if request_api_key else "None"
         logger.info(f"调用 OpenAI 兼容接口 ({config.api_type}): {config.model} @ {target_url}\nKey: {masked_key}\nParams: {json.dumps(debug_payload, ensure_ascii=False)}")
+        
+        use_stream = config.api_type.lower() == "zai"
         raw_image_bytes = None
+        content_result = ""
 
-        try:
+        if use_stream:
+            try:
+                logger.info(f"正在尝试流式请求 (Anti-524 Mode)...")
+                content_result = await self._stream_generate(
+                    self.session, 
+                    target_url, 
+                    payload.copy(),
+                    headers, 
+                    config.proxy_url, 
+                    config.timeout
+                )
+                logger.info("流式接收完成，正在解析图片地址...")
+                
+            except Exception as e:
+                logger.warning(f"流式请求失败，尝试回退到普通模式: {e}")
+                use_stream = False
+
+        if not use_stream:
+            payload["stream"] = False
             async with self.session.post(
                 target_url,
                 json=payload,
@@ -430,53 +487,48 @@ class OpenAIProvider(BaseGenerationProvider):
 
                 try:
                     data = json.loads(response_text)
+                    image_url = self._extract_image_url(data)
+                    if image_url:
+                        content_result = image_url
+                    else:
+                        if "choices" in data and data["choices"]:
+                            content_result = data["choices"][0]["message"].get("content", "")
+
                 except json.JSONDecodeError:
-                    content_type = resp.headers.get("Content-Type", "").lower()
-                    if "text/event-stream" in content_type or response_text.strip().startswith("data:"):
-                        logger.debug("检测到 SSE 流式响应，正在进行兼容性解析...")
-                        data = self._parse_sse_response(response_text)
+                    if "data:" in response_text:
+                        simulated_data = self._parse_sse_response(response_text)
+                        content_result = simulated_data["choices"][0]["message"]["content"]
                     else:
                         raise APIError(APIErrorType.SERVER_ERROR, f"无效的 JSON 响应: {response_text[:200]}")
 
-            if "error" in data:
-                err_msg = str(data["error"].get("message", data["error"]))
-                raise Exception(f"OpenAI Error: {err_msg}")
+        image_url = None
 
-            image_url = self._extract_image_url(data)
+        if content_result.startswith("http") or content_result.startswith("data:image"):
+            image_url = content_result
+        else:
+            fake_data = {
+                "choices": [{"message": {"content": content_result}}]
+            }
+            image_url = self._extract_image_url(fake_data)
 
-            if not image_url:
-                log_data = data.copy() if isinstance(data, dict) else data
-                if isinstance(log_data, dict):
-                    if "data" in log_data and isinstance(log_data["data"], list):
-                        for item in log_data["data"][:5]: 
-                            if isinstance(item, dict) and "b64_json" in item:
-                                item["b64_json"] = "b64_image_data_hidden_len_" + str(len(item["b64_json"]))
-                debug_json = ConfigSerializer.serialize_pretty(log_data)
-                logger.error(f"OpenAI 响应解析失败，无法提取图片 URL。\n完整响应数据:\n{debug_json}")
-                raise APIError(APIErrorType.SERVER_ERROR, "API响应中未找到有效的图片地址") 
+        if not image_url:
+            logger.error(f"无法提取图片 URL。原始内容预览: {content_result[:200]}")
+            raise APIError(APIErrorType.SERVER_ERROR, "API响应中未找到有效的图片地址")
 
-            if image_url.startswith("data:image/") or ";base64," in image_url or not image_url.startswith("http"):
-                try:
-                    normalized_b64 = self._validate_and_normalize_b64(image_url)
-                    raw_image_bytes = base64.b64decode(normalized_b64)
-                except Exception as e:
-                    logger.error(f"Base64 解码失败: {e}")
-                    raise APIError(APIErrorType.SERVER_ERROR, "图片数据 Base64 解码失败")
-            else:
-                raw_image_bytes = await ImageUtils.download_image(
-                    image_url, proxy=config.proxy_url, session=self.session
-                )
+        if image_url.startswith("data:image/") or ";base64," in image_url or not image_url.startswith("http"):
+            try:
+                normalized_b64 = self._validate_and_normalize_b64(image_url)
+                raw_image_bytes = base64.b64decode(normalized_b64)
+            except Exception as e:
+                logger.error(f"Base64 解码失败: {e}")
+                raise APIError(APIErrorType.SERVER_ERROR, "图片数据 Base64 解码失败")
+        else:
+            raw_image_bytes = await ImageUtils.download_image(
+                image_url, proxy=config.proxy_url, session=self.session, timeout=60
+            )
 
-            if not raw_image_bytes:
-                raise APIError(APIErrorType.SERVER_ERROR, "下载生成图片失败或内容为空")
-
-        except asyncio.TimeoutError:
-            raise APIError(APIErrorType.SERVER_ERROR, "请求超时")
-        except APIError:
-            raise
-        except Exception as e:
-            api_error, _ = self.analyze_exception(e)
-            raise api_error
+        if not raw_image_bytes:
+            raise APIError(APIErrorType.SERVER_ERROR, "下载生成图片失败或内容为空")
 
         return GenResult(image=raw_image_bytes)
 
