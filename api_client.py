@@ -451,8 +451,7 @@ class OpenAIProvider(BaseGenerationProvider):
             api_error, _ = self.analyze_exception(e)
             raise api_error
 
-        final_bytes = await ImageUtils.compress_image(raw_image_bytes)
-        return GenResult(image=final_bytes)
+        return GenResult(image=raw_image_bytes)
 
     def _extract_image_url(self, data: Dict[str, Any]) -> str | None:
         # 标准DALL-E

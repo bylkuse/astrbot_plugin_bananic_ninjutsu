@@ -329,11 +329,11 @@
 ## 🤝 友情鸣谢
 
 Gemini Image https://github.com/railgun19457/astrbot_plugin_gemini_image/
-Gemini Image Generation https://github.com/piexian/astrbot_plugin_gemini_image_generation
-他们的项目给予了我很多灵感和先进实现
----
-AstrBot https://github.com/AstrBotDevs/AstrBot 我的Bot启蒙导师
-Gemini(cli) https://github.com/google-gemini/gemini-cli 赛博大善人，代码审阅极大降低了我的工作量
+<br>Gemini Image Generation https://github.com/piexian/astrbot_plugin_gemini_image_generation
+<br>他们的项目给予了我很多灵感和先进实现
+
+<br>AstrBot https://github.com/AstrBotDevs/AstrBot 我的Bot启蒙导师
+<br>Gemini(cli) https://github.com/google-gemini/gemini-cli 赛博大善人，代码审阅极大降低了我的工作量
 
 ## 🌳 目录结构
 ```
