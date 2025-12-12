@@ -416,11 +416,17 @@ class OpenAIProvider(BaseGenerationProvider):
                             if resp.status == 401 and config.api_type == "zai":
                                 if ZaiTokenManager:
                                     ZaiTokenManager.invalidate_cache(api_key)
-                                raise APIError(APIErrorType.AUTH_FAILED, "Zai Token 已失效 (401) - 已清除缓存等待重试")
-                            raise Exception(f"OpenAI API Error: {msg}")
+                                raise APIError(APIErrorType.AUTH_FAILED, "Zai Token 已失效 (401) - 已清除缓存等待重试", status_code=401)
+                            raise APIError(APIErrorType.SERVER_ERROR, f"API Error: {msg}", status_code=resp.status)
                     except json.JSONDecodeError:
                         pass
-                    raise Exception(f"HTTP {resp.status}: {response_text[:200]}")
+
+                    error_type = APIErrorType.SERVER_ERROR if 500 <= resp.status < 600 else APIErrorType.UNKNOWN
+                    clean_msg = response_text[:200]
+                    if "<html" in clean_msg.lower() or "<!doctype" in clean_msg.lower():
+                        clean_msg = "Cloudflare/Server Error Page (HTML)"
+
+                    raise APIError(error_type, f"HTTP {resp.status}: {clean_msg}", status_code=resp.status)
 
                 try:
                     data = json.loads(response_text)

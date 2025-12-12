@@ -195,7 +195,7 @@ class GenerationService:
                 debug_mode=debug_mode,
                 prompt=prompt,
                 image_bytes_list=images,
-                image_size=str(sz_val),
+                image_size=sz_str,
                 aspect_ratio=params.get("aspect_ratio", "default"),
                 enable_search=bool(params.get("google_search", False)),
                 enhancer_model_name=enhancer_model_name,
