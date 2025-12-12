@@ -22,7 +22,8 @@ class DataStrategy(ABC):
 
     async def process(self, event: AstrMessageEvent, sub_cmd: str, args: List[str]):
         if sub_cmd in ["l", "list"] or (not sub_cmd and not args):
-            yield event.plain_result(self.get_summary(simple=(sub_cmd == "l")))
+            summary = self.get_summary(simple=(sub_cmd in ["l", "list"]))
+            yield event.plain_result(summary)
             return
 
         extra_res = await self.handle_custom_command(event, sub_cmd, args)
@@ -102,23 +103,74 @@ class DictDataStrategy(DataStrategy):
         self.dup_type = duplicate_type
         self.cmd_name = cmd_name
 
+    async def process(self, event: AstrMessageEvent, sub_cmd: str, args: List[str]):
+        if sub_cmd in ["l", "list"] or (not sub_cmd and not args):
+            simple_mode = (sub_cmd in ["l", "list"])
+            keys = sorted(self.data.keys())
+
+            if not keys:
+                yield event.plain_result(f"✨ {self.item_name}列表为空。")
+                return
+
+            header_title = "名录" if simple_mode else "列表 (详细)"
+            header_text = f"✨ {self.item_name}{header_title} (共{len(keys)}条):"
+            yield event.plain_result(header_text)
+
+            if simple_mode:
+                # 简略模式 (按字符数分包)
+                CHAR_LIMIT = 3000
+
+                buffer = []
+                current_len = 0
+
+                for k in keys:
+                    delta_len = len(k) + 2
+
+                    if current_len + delta_len > CHAR_LIMIT:
+
+                        msg = ", ".join(buffer)
+                        yield event.plain_result(msg)
+
+                        buffer = [k]
+                        current_len = len(k)
+                        await asyncio.sleep(0.2)
+                    else:
+                        buffer.append(k)
+                        current_len += delta_len
+
+                if buffer:
+                    yield event.plain_result(", ".join(buffer))
+
+            else:
+                # 详细模式 (按条目数分包)
+                BATCH_SIZE = 150
+
+                current_batch = []
+
+                for k in keys:
+                    content = str(self.data.get(k, "")).replace("\n", " ").strip()
+                    preview = content[:25] + "..." if len(content) > 25 else content
+                    current_batch.append(f"▪️ [{k}]: {preview}")
+
+                    if len(current_batch) >= BATCH_SIZE:
+                        msg = "\n".join(current_batch)
+                        yield event.plain_result(msg)
+                        current_batch = []
+                        await asyncio.sleep(0.2)
+
+                if current_batch:
+                    yield event.plain_result("\n".join(current_batch))
+
+            cmd_p = self.mgr.main_prefix
+            footer = f"💡 指令: {cmd_p}{self.cmd_name} <名> (查看) | {cmd_p}{self.cmd_name} :<关键词> (搜索) | {cmd_p}{self.cmd_name} <名>:[内容] (添加/修改)"
+            yield event.plain_result(footer)
+            return
+
+        async for res in super().process(event, sub_cmd, args):
+            yield res
+
     def get_summary(self, simple: bool = False) -> str:
-        keys = sorted(self.data.keys())
-        if not keys:
-            return f"✨ {self.item_name}列表为空。"
-
-        if simple:
-            return f"✨ {self.item_name}名录:\n" + ", ".join(keys)
-
-        lines = [f"✨ {self.item_name}列表 (详细):"]
-        for k in keys:
-            content = str(self.data.get(k, "")).replace("\n", " ").strip()
-            preview = content[:30] + "..." if len(content) > 30 else content
-            lines.append(f"▪️ [{k}]: {preview}")
-
-        cmd_p = self.mgr.main_prefix
-        lines.append(f"\n💡 指令: {cmd_p}{self.cmd_name} <名> (查看) | {cmd_p}{self.cmd_name} <名>:[内容] (添加/修改)")
-        return "\n".join(lines)
+        return ""
 
     async def do_delete(self, key: str) -> Tuple[bool, str]:
         if key not in self.data:
@@ -408,16 +460,16 @@ class ConnectionStrategy(DataStrategy):
 
 class ConfigManager:
     def __init__(
-        self, config_obj: Any, prompt_manager: PromptManager, context: Context
+        self, 
+        config_obj: Any, 
+        prompt_manager: PromptManager, 
+        context: Context,
+        prefixes: List[str]
     ):
         self.conf = config_obj
         self.pm = prompt_manager
         self.context = context
-
-        raw_prefixes = context.get_config().get("command_prefixes", ["/"])
-        if isinstance(raw_prefixes, str):
-            raw_prefixes = [raw_prefixes]
-        self.prefixes = sorted(raw_prefixes, key=len, reverse=True)
+        self.prefixes = prefixes
         self.main_prefix = self.prefixes[0] if self.prefixes else "#"
 
     def is_admin(self, event: AstrMessageEvent) -> bool:

@@ -44,13 +44,15 @@ class Ninjutsu(Star):
         raw_prefixes = self.context.get_config().get("command_prefixes", ["/"])
         if isinstance(raw_prefixes, str):
             raw_prefixes = [raw_prefixes]
+        if "#" not in raw_prefixes:
+            raw_prefixes.append("#")
         self.global_prefixes = sorted(raw_prefixes, key=len, reverse=True)
         self.main_prefix = self.global_prefixes[0] if self.global_prefixes else "#"
 
         self.pm = PromptManager(self.conf, self.plugin_data_dir)
         self.api_client = APIClient()
         self.stats = StatsManager(self.plugin_data_dir)
-        self.config_mgr = ConfigManager(self.conf, self.pm, self.context)
+        self.config_mgr = ConfigManager(self.conf, self.pm, self.context, self.global_prefixes)
 
         self.connection_presets = {}
         self.generation_service: GenerationService | None = None
