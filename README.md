@@ -289,8 +289,10 @@
 **欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
 ### 第一序列
 * ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
-* ~~完成内置优化预设~~
-* ~~写一份正式的readme~~
+* 关键词搜索预设
+* 反推提示词
+* 会话式采集，作为移动端多图的一种fallback
+* 给压缩加个开关
 ### 第二序列
 参考 piexian/astrbot_plugin_gemini_image_generation 引入先进处理：
 * 添加gemini的openai方式作为fallback
@@ -324,10 +326,6 @@ astrbot_plugin_bananic_ninjutsu/
 ├── api_client.py         # 通信层
 └── main.py               # 指令入口&逻辑
 ```
-
-## ⚖️ License
-
-MIT License.
 
 ---
 
