@@ -136,8 +136,28 @@ class DictDataStrategy(DataStrategy):
 
     async def do_update_or_view(self, event, key: str, args: List[str]) -> Any:
         full_text = key + " " + " ".join(args) if args else key
-        parsed = ConfigSerializer.parse_single_kv(full_text)
 
+        if full_text.startswith(":") and len(full_text) > 1:
+            keyword = full_text[1:].strip().lower()
+            found = []
+
+            for k, v in self.data.items():
+                if keyword in k.lower() or keyword in str(v).lower():
+                    found.append((k, v))
+
+            if not found:
+                yield event.plain_result(f"🔍 未找到包含关键词 [{keyword}] 的{self.item_name}。")
+            else:
+                msg_lines = [f"🔍 搜索 [{keyword}] 结果 (共{len(found)}条):"]
+                for k, v in found:
+                    preview = str(v).replace("\n", " ")
+                    if len(preview) > 50:
+                        preview = preview[:50] + "..."
+                    msg_lines.append(f"▪️ **{k}**: {preview}")
+                yield event.plain_result("\n".join(msg_lines))
+            return
+
+        parsed = ConfigSerializer.parse_single_kv(full_text)
         if not parsed and (not args and ":" not in key):
             detail = self.data.get(key)
             if detail:

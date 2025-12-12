@@ -337,7 +337,9 @@ class ResponsePresenter:
     {p}lmp 或 {p}lm预设 ▸ 列表预览
     {p}lmo 或 {p}lm优化 ▸ 优化预设预览
   ▸ 通用操作:
-    {p}lmp <名称>:[内容] ▸ 添加/覆盖
+    {p}lmp <预设名> ▸ 查看提示词详情
+    {p}lmp <预设名>:[提示词] ▸ 添加/覆盖
+    {p}lmp :[关键词] ▸ 搜索功能
     {p}lmp del/ren ... ▸ 删除/重命名
 
 --- 🔧 管理 ---

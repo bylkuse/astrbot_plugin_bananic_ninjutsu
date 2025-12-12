@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.2.2-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.2.3-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -45,7 +45,7 @@
 | `带排序&预览的详细列表` | `太长不看？来个省流版` |
 | :---: | :---: |
 | <img src="./preview/lmp1.jpg" width="400"> | <img src="./preview/lmp2.jpg" width="400"> |
-| `查看详情&变量提醒` | `智能查重，守护你的预设数据` |
+| `搜索功能，大量预设不再头痛` | `智能查重，守护你的预设数据` |
 | <img src="./preview/lmp4.jpg" width="400"> | <img src="./preview/lmp3.jpg" width="400"> |
 
 ### 先进的变量&参数系统
@@ -103,6 +103,7 @@
 | `#lmp l` | 紧凑视图的列表 |
 | `#lmp <生图预设名>` | 查看提示词详情 |
 | `#lmp <生图预设名>:[提示词]` | 添加/覆盖生图预设 |
+| `#lmp :[关键词]` | 在预设中搜索 |
 | `#lmp ren <旧名> <新名>` | 重命名生图预设（仅管理） |
 | `#lmp del <生图预设名>` | 删除生图预设（仅管理） |
 
@@ -289,7 +290,7 @@
 **欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
 ### 第一序列
 * ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
-* 关键词搜索预设
+* ~~关键词搜索预设~~
 * 反推提示词
 * 会话式采集，作为移动端多图的一种fallback
 * 给压缩加个开关
