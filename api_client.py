@@ -289,7 +289,9 @@ class OpenAIProvider(BaseGenerationProvider):
         return f"{url}/v1/chat/completions"
 
     def _parse_sse_response(self, raw_text: str) -> Dict[str, Any]:
-        events = []
+        full_content = ""
+        last_valid_event = {}
+
         for line in raw_text.splitlines():
             line = line.strip()
             if not line or line.startswith(":"):
@@ -301,15 +303,31 @@ class OpenAIProvider(BaseGenerationProvider):
                 try:
                     event = json.loads(json_str)
                     if isinstance(event, dict):
-                        events.append(event)
+                        last_valid_event = event
+                        # 拼接content
+                        if "choices" in event and len(event["choices"]) > 0:
+                            delta = event["choices"][0].get("delta", {})
+                            if "content" in delta:
+                                full_content += delta["content"]
                 except json.JSONDecodeError:
                     continue
-        if not events:
-            raise APIError(APIErrorType.SERVER_ERROR, f"无法解析 SSE 响应: {raw_text[:200]}")
-        for event in reversed(events):
-            if event.get("choices") or event.get("data"):
-                return event
-        return events[-1]
+
+        if not full_content and not last_valid_event:
+             raise APIError(APIErrorType.SERVER_ERROR, f"无法解析 SSE 响应: {raw_text[:200]}")
+
+        # 伪非流
+        simulated_response = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": full_content
+                }
+            }]
+        }
+
+        if last_valid_event:
+            simulated_response.update({k: v for k, v in last_valid_event.items() if k not in ["choices"]})
+        return simulated_response
 
     async def generate(self, api_key: str, config: 'ApiRequestConfig', images: List[bytes]) -> 'GenResult':
         headers = {
@@ -418,6 +436,20 @@ class OpenAIProvider(BaseGenerationProvider):
             if "b64_json" in item:
                 return f"data:image/png;base64,{item['b64_json']}"
 
+        # 兼容Gemini
+        if "candidates" in data:
+            try:
+                parts = data["candidates"][0]["content"]["parts"]
+                for p in parts:
+                    if "inlineData" in p:
+                        return f"data:{p['inlineData']['mimeType']};base64,{p['inlineData']['data']}"
+                    if "text" in p:
+                        match = re.search(r'https?://[^\s<>")\]]+', p["text"])
+                        if match:
+                            return match.group(0).rstrip(")>,'\"")
+            except (KeyError, IndexError):
+                pass
+
         # Chat Completion
         content = ""
         if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
@@ -435,7 +467,14 @@ class OpenAIProvider(BaseGenerationProvider):
 
         # content解析
         if content and isinstance(content, str):
-            # MD图片
+            # Data URI
+            data_uri_match = re.search(
+                r"(data:image/[a-zA-Z0-9.+-]+;\s*base64\s*,\s*[-A-Za-z0-9+/=_\s]+)", 
+                content
+            )
+            if data_uri_match:
+                return data_uri_match.group(1).strip()
+            # MD图片语法
             md_match = re.search(r"!\[.*?\]\((https?://[^\)]+)\)", content)
             if md_match:
                 return md_match.group(1).strip()
@@ -444,16 +483,9 @@ class OpenAIProvider(BaseGenerationProvider):
             if md_data_match:
                 return md_data_match.group(1).strip()
             # HTTP(S)
-            url_match = re.search(r"(https?://[^\s)]+\.(?:png|jpe?g|gif|webp|bmp|tiff|avif))", content, re.IGNORECASE)
+            url_match = re.search(r"(https?://[^\s<>\"')\]]+\.(?:png|jpe?g|gif|webp|bmp|tiff|avif))", content, re.IGNORECASE)
             if url_match:
                 return url_match.group(1).strip()
-            # Data URI
-            data_uri_match = re.search(
-                r"(data:image/[a-zA-Z0-9.+-]+;\s*base64\s*,\s*[-A-Za-z0-9+/=_\s]+)", 
-                content
-            )
-            if data_uri_match:
-                return data_uri_match.group(1).strip()
 
         return None
 
