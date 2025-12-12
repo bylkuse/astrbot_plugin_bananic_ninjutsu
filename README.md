@@ -5,13 +5,13 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.2.4-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.2.5-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
 *极客  优雅  更多🍌。*
 
-[功能预览](#-功能预览) • [指令大全](#-指令大全) • [配置详解](#-配置详解) • [核心优势](#-核心优势) • [计划清单](#-计划清单) • [友情鸣谢](#-友情鸣谢)
+[功能预览](#-功能预览) • [指令大全](#-指令大全) • [配置详解](#-配置详解) • [核心优势](#-核心优势) • [计划清单](#-计划清单) • [常见问题](#-常见问题) • [友情鸣谢](#-友情鸣谢)
 
 </div>
 
@@ -289,6 +289,7 @@
 ## ✔ 计划清单
 
 **欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
+
 ### 第一序列
 * ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
 * ~~关键词搜索预设~~
@@ -306,31 +307,22 @@
 * 占位符-上下文总结
 * 占位符-预设的图片模板
 
-## ✔ 计划清单
+🫸🏻 暂不考虑做工具调用支持，本身该插件的灵活&强大在使用自然语言时几无发挥余地
+🔧 且过多画图插件都喜欢塞个工具调用，这在使用同类插件时引入了【冗余&冲突】，和我的插件宗旨相悖
 
-**欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
-### 第一序列
-* ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
-* ~~关键词搜索预设~~
-* 反推提示词
-* 会话式采集，作为移动端多图的一种fallback
-* 给压缩加个开关
-### 第二序列
-参考 piexian/astrbot_plugin_gemini_image_generation 引入先进处理：
-* 添加gemini的openai方式作为fallback
-* OpenAI 兼容接口下的传参
-* ~~为头像获取引入备用方法~~
-* 视觉裁切
-### 第三序列（瞎想！不一定能做也不一定会做）
-* 引入api支持，作为变量或输入图
-* 占位符-上下文总结
-* 占位符-预设的图片模板
+## ❓︎ 常见问题
+
+### 关于zAI
+zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（貌似3个小时有效期？），均通过F12获取
+<br>Discord Token在Discord登录后，携带 /api 请求的 Authorization 字段中找到
+<br>zAI Token只需要在 https://zai.is/ 中，找到存储的 token 字段
 
 ## 🤝 友情鸣谢
 
 Gemini Image https://github.com/railgun19457/astrbot_plugin_gemini_image/
 <br>Gemini Image Generation https://github.com/piexian/astrbot_plugin_gemini_image_generation
-<br>他们的项目给予了我很多灵感和先进实现
+<br>zai.is2api https://github.com/Futureppo/zai.is2api
+<br>他们的项目给予了我很多灵感和先进实现作为参考
 
 <br>AstrBot https://github.com/AstrBotDevs/AstrBot 我的Bot启蒙导师
 <br>Gemini(cli) https://github.com/google-gemini/gemini-cli 赛博大善人，代码审阅极大降低了我的工作量

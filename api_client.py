@@ -29,6 +29,7 @@ except ImportError:
 from .core.images import ImageUtils
 from .utils.serializer import ConfigSerializer
 from .utils.result import Result, Ok, Err
+from .utils.zai import ZaiTokenManager
 
 
 class APIErrorType(Enum):
@@ -330,9 +331,20 @@ class OpenAIProvider(BaseGenerationProvider):
         return simulated_response
 
     async def generate(self, api_key: str, config: 'ApiRequestConfig', images: List[bytes]) -> 'GenResult':
+        request_api_key = api_key
+        if config.api_type.lower() == "zai":
+            if ZaiTokenManager:
+                try:
+                    request_api_key = await ZaiTokenManager.get_access_token(api_key)
+                except Exception as e:
+                    logger.error(f"Zai Token 交换失败: {e}")
+                    raise APIError(APIErrorType.AUTH_FAILED, f"Discord Token 登录失败: {e}")
+            else:
+                logger.error("ZaiTokenManager 未加载，无法进行 Token 交换")
+
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {request_api_key}",
         }
 
         content_list = [{"type": "text", "text": config.prompt}]
@@ -378,7 +390,9 @@ class OpenAIProvider(BaseGenerationProvider):
         debug_payload = payload.copy()
         if "messages" in debug_payload:
             debug_payload["messages"] = "[(Hidden content with Base64 images)]"
-        logger.info(f"调用 OpenAI 兼容接口 ({config.api_type}): {config.model} @ {target_url}\nParams: {json.dumps(debug_payload, ensure_ascii=False)}")
+        # 隐藏Key日志
+        masked_key = request_api_key[:6] + "..." if request_api_key else "None"
+        logger.info(f"调用 OpenAI 兼容接口 ({config.api_type}): {config.model} @ {target_url}\nKey: {masked_key}\nParams: {json.dumps(debug_payload, ensure_ascii=False)}")
         raw_image_bytes = None
 
         try:
@@ -396,6 +410,10 @@ class OpenAIProvider(BaseGenerationProvider):
                         err_data = json.loads(response_text)
                         if "error" in err_data:
                             msg = err_data["error"].get("message", str(err_data))
+                            if resp.status == 401 and config.api_type == "zai":
+                                if ZaiTokenManager:
+                                    ZaiTokenManager.invalidate_cache(api_key)
+                                raise APIError(APIErrorType.AUTH_FAILED, "Zai Token 已失效 (401) - 已清除缓存等待重试")
                             raise Exception(f"OpenAI API Error: {msg}")
                     except json.JSONDecodeError:
                         pass
@@ -426,7 +444,7 @@ class OpenAIProvider(BaseGenerationProvider):
                                 item["b64_json"] = "b64_image_data_hidden_len_" + str(len(item["b64_json"]))
                 debug_json = ConfigSerializer.serialize_pretty(log_data)
                 logger.error(f"OpenAI 响应解析失败，无法提取图片 URL。\n完整响应数据:\n{debug_json}")
-                raise APIError(APIErrorType.SERVER_ERROR, "API响应中未找到有效的图片地址") #小香蕉会抽风，标记为可重试
+                raise APIError(APIErrorType.SERVER_ERROR, "API响应中未找到有效的图片地址") 
 
             if image_url.startswith("data:image/") or ";base64," in image_url or not image_url.startswith("http"):
                 try:
@@ -546,7 +564,7 @@ class APIClient:
                 raise APIError(APIErrorType.INVALID_ARGUMENT, f"不支持的 API 类型: {api_type}")
 
         if self._providers[api_type].session != self._session:
-             self._providers[api_type].session = self._session
+            self._providers[api_type].session = self._session
 
         return self._providers[api_type]
 
