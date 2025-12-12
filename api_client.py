@@ -345,13 +345,40 @@ class OpenAIProvider(BaseGenerationProvider):
 
         payload = {
             "model": config.model,
-            "max_tokens": 1500,
             "messages": [{"role": "user", "content": content_list}],
             "stream": False,
         }
-        target_url = self._resolve_endpoint(config.api_base)
+        # zAI
+        if config.api_type.lower() in ["zai"]:
+            extra_params = {}
+            if config.aspect_ratio != "default":
+                extra_params["image_aspect_ratio"] = config.aspect_ratio
+            if config.image_size and config.image_size != "default":
+                extra_params["image_resolution"] = config.image_size
+            if extra_params:
+                payload["params"] = extra_params
 
-        logger.info(f"调用 OpenAI 兼容接口: {config.model} @ {config.api_base}")
+        # 兼容Gemini
+        elif "gemini" in config.model.lower() or config.api_type == "openai_gemini":
+            payload["modalities"] = ["image", "text"]
+            gen_config = {}
+            img_config = {}
+            if config.aspect_ratio != "default":
+                img_config["aspectRatio"] = config.aspect_ratio
+            if config.image_size and config.image_size != "default":
+                img_config["imageSize"] = config.image_size
+            if img_config:
+                gen_config["imageConfig"] = img_config
+                payload["generationConfig"] = gen_config
+
+        else:
+            payload["max_tokens"] = 1500
+
+        target_url = self._resolve_endpoint(config.api_base)
+        debug_payload = payload.copy()
+        if "messages" in debug_payload:
+            debug_payload["messages"] = "[(Hidden content with Base64 images)]"
+        logger.info(f"调用 OpenAI 兼容接口 ({config.api_type}): {config.model} @ {target_url}\nParams: {json.dumps(debug_payload, ensure_ascii=False)}")
         raw_image_bytes = None
 
         try:
@@ -360,7 +387,7 @@ class OpenAIProvider(BaseGenerationProvider):
                 json=payload,
                 headers=headers,
                 proxy=config.proxy_url,
-                timeout=120,
+                timeout=config.timeout,
             ) as resp:
                 response_text = await resp.text()
 
@@ -509,12 +536,12 @@ class APIClient:
 
     def _get_provider(self, api_type: str) -> BaseGenerationProvider:
         if self._session is None:
-             raise RuntimeError("Session未初始化")
+            raise RuntimeError("Session未初始化")
 
         if api_type not in self._providers:
             if api_type == "google":
                 self._providers[api_type] = GoogleProvider(self._session)
-            elif api_type == "openai":
+            elif api_type in ["openai", "zai"]:
                 self._providers[api_type] = OpenAIProvider(self._session)
             else:
                 raise APIError(APIErrorType.INVALID_ARGUMENT, f"不支持的 API 类型: {api_type}")
