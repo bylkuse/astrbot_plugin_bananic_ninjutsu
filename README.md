@@ -312,6 +312,9 @@
 
 ## ❓ 常见问题
 
+### 关于google API
+为了兼容性&健壮性使用的是genai sdk实现，代价是不能传入插件内的proxy设置。因此使用google官方API时，请确保在AstrBot或环境变量中进行了正确的代理配置。
+
 ### 关于zAI
 zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（貌似3个小时有效期？），均通过F12获取
 <br>Discord Token在Discord登录后，携带 /api 请求的 Authorization 字段中找到

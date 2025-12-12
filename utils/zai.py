@@ -11,7 +11,7 @@ class DiscordOAuthHandler:
     """基于Futureppo大佬的实现，请感谢他"""
     DISCORD_API_BASE = "https://discord.com/api/v9"
 
-    def __init__(self, base_url: str = "https://zai.is"):
+    def __init__(self, base_url: str = "https://zai.is", proxy: str | None = None):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({
@@ -21,9 +21,15 @@ class DiscordOAuthHandler:
             'Origin': base_url,
         })
 
+        if proxy:
+            self.session.proxies = {
+                "http": proxy,
+                "https": proxy
+            }
+
     def backend_login(self, discord_token: str) -> Dict[str, Any]:
         if not discord_token:
-             return {'error': '无效的 Discord Token'}
+            return {'error': '无效的 Discord Token'}
 
         try:
             # 获取URL
@@ -133,7 +139,7 @@ class ZaiTokenManager:
     CACHE_DURATION = 3600 * 2.8 
 
     @classmethod
-    async def get_access_token(cls, discord_token: str) -> str:
+    async def get_access_token(cls, discord_token: str, proxy: str | None = None) -> str:
         async with cls._lock:
             now = time.time()
             cached = cls._cache.get(discord_token)
@@ -146,7 +152,7 @@ class ZaiTokenManager:
             else:
                 logger.info(f"首次获取 Zai Token (Key: ...{discord_token[-6:]})")
 
-            handler = DiscordOAuthHandler()
+            handler = DiscordOAuthHandler(proxy=proxy)
             result = await asyncio.to_thread(handler.backend_login, discord_token)
 
             if 'error' in result:

@@ -335,7 +335,10 @@ class OpenAIProvider(BaseGenerationProvider):
         if config.api_type.lower() == "zai":
             if ZaiTokenManager:
                 try:
-                    request_api_key = await ZaiTokenManager.get_access_token(api_key)
+                    request_api_key = await ZaiTokenManager.get_access_token(
+                        api_key, 
+                        proxy=config.proxy_url
+                    )
                 except Exception as e:
                     logger.error(f"Zai Token 交换失败: {e}")
                     raise APIError(APIErrorType.AUTH_FAILED, f"Discord Token 登录失败: {e}")
