@@ -469,11 +469,19 @@ class OpenAIProvider(BaseGenerationProvider):
                     try:
                         err_data = json.loads(response_text)
                         if "error" in err_data:
-                            msg = err_data["error"].get("message", str(err_data))
+                            if isinstance(err_data["error"], dict):
+                                msg = err_data["error"].get("message", str(err_data["error"]))
+                            else:
+                                msg = str(err_data["error"])
                             if resp.status == 401 and config.api_type == "zai":
                                 if ZaiTokenManager:
                                     ZaiTokenManager.invalidate_cache(api_key)
                                 raise APIError(APIErrorType.AUTH_FAILED, "Zai Token 已失效 (401) - 已清除缓存等待重试", status_code=401)
+                            msg_lower = msg.lower()
+                            if any(k in msg_lower for k in ["blocked", "prohibited", "safety", "nsfw"]):
+                                raise APIError(APIErrorType.SAFETY_BLOCK, f"内容安全拦截: {msg}", status_code=resp.status)
+                            if resp.status == 400:
+                                raise APIError(APIErrorType.INVALID_ARGUMENT, f"请求参数错误: {msg}", status_code=400)
                             raise APIError(APIErrorType.SERVER_ERROR, f"API Error: {msg}", status_code=resp.status)
                     except json.JSONDecodeError:
                         pass
