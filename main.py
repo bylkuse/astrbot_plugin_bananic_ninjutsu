@@ -363,6 +363,9 @@ class Ninjutsu(Star):
             preset_name=target_preset_name,
             key_list=keys_list,
             config_mgr=self.config_mgr,
+            api_client=self.api_client,
+            preset_config=target_data,
+            raw_config=self.conf,
             save_callback=save_keys
         )
 

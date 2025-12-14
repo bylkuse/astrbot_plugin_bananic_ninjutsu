@@ -228,18 +228,32 @@ class ResponsePresenter:
         return "\n".join(lines)
 
     @staticmethod
-    def format_connection_detail(name: str, data: Dict[str, Any], p: str = "#") -> str:
+    def format_connection_detail(name: str, data: Dict[str, Any], p: str = "#", available_models: List[str] = None) -> str:
         keys = data.get("api_keys", [])
         count = len(keys)
         key_info = f"{count} 个" + (f" (请使用 {p}lmk 查看或管理)" if count > 0 else "")
 
-        return (
+        base_info = (
             f"📝 连接预设 [{name}] 详情:\n"
             f"API 类型: {data.get('api_type')}\n"
             f"API URL: {data.get('api_url')}\n"
-            f"模型: {data.get('model')}\n"
+            f"当前模型: {data.get('model')}\n"
             f"Keys: {key_info}"
         )
+
+        model_list_str = ""
+        if available_models:
+            limit = 20
+            top_models = available_models[:limit]
+            list_content = "\n".join(top_models)
+            model_list_str = f"\n\n📋 **服务器可用生图模型 (Top {limit}):**\n{list_content}"
+            if len(available_models) > limit:
+                model_list_str += f"\n... (剩余 {len(available_models) - limit} 个)"
+            model_list_str += f"\n\n💡 切换指令: {p}lmc {name} model <模型名>"
+        elif available_models is not None:
+            model_list_str = "\n\n⚠️ 无法获取可用模型列表 (网络超时或接口不支持)"
+
+        return base_info + model_list_str
 
     @staticmethod
     def format_connection_switch_success(name: str, data: Dict[str, Any]) -> str:
@@ -248,12 +262,12 @@ class ResponsePresenter:
             f"✅ 连接已成功切换为 **[{name}]** \n"
             f"API 类型: {data.get('api_type')}\n"
             f"API URL: {data.get('api_url', 'N/A')}\n"
-            f"模型: {data.get('model')}\n"
+            f"当前模型: {data.get('model')}\n"
             f"Key 数量: {key_count}"
         )
 
     @staticmethod
-    def format_key_list(name: str, keys: List[str], p: str = "#") -> str:
+    def format_key_list(name: str, keys: List[str], p: str = "#", status_map: Dict[str, str] = None) -> str:
         if not keys:
             return f"🔑 预设 [{name}] 暂无配置任何 Key。"
         lines = [f"🔑 预设 [{name}] 密钥列表 (共{len(keys)}个):"]
@@ -262,9 +276,21 @@ class ResponsePresenter:
                 masked_key = f"{k[:8]}......{k[-4:]}"
             else:
                 masked_key = k
-
-            lines.append(f"{i + 1}. {masked_key}")
+            status_icon = ""
+            if status_map:
+                status = status_map.get(k)
+                if status == "valid":
+                    status_icon = " ✅"
+                elif status == "invalid":
+                    status_icon = " ❌"
+                elif status == "unknown":
+                    status_icon = " ❓"
+                else:
+                    status_icon = " ⏳"
+            lines.append(f"{i + 1}. {masked_key}{status_icon}")
         lines.append(f"\n💡 指令提示: {p}lmk del <预设名> [序号] 删除指定Key")
+        if status_map:
+             lines.append("📝 图例: ✅可用 | ❌无效/额度耗尽 | ❓网络超时")
         return "\n".join(lines)
 
     @staticmethod

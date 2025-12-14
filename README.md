@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.2.9-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.0-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -41,12 +41,17 @@
 | <img src="./preview/lmc1.jpg" width="400"> | <img src="./preview/lmc3.jpg" width="400"> |
 | [🔌成熟&人性化的连接管理](#cmd-supplier) | [📢格式&当心密钥泄漏](#supplier-format) |
 
-⚠建议使用 [#lmc 指令组](#cmd-supplier)进行供应商添加和修改操作：受限于AstrBot的前端实现，web配置面板中连接预设只能以json字符串展示，进行修改容易出现疏漏
+⚠建议使用 [#lmc 指令组](#cmd-supplier)进行供应商添加和修改操作：受限于AstrBot的前端实现，web配置面板中连接预设只能以json字符串展示，直接修改容易出现疏漏
 
 | `失效？灵活切换` | `填错？便捷修改` |
 | :---: | :---: |
 | <img src="./preview/lmc2.jpg" width="400"> | <img src="./preview/lmc4.jpg" width="400"> |
-| `#lmc to gb2`<br>#替换你的AstrBot唤醒词<br>lmc是连接管理指令组<br>to是切换子指令<br>gb2替换一个存在的连接名 | 🔍️你可以先使用`#lmc <连接名>`查看详情 |
+| `#lmc to gb2`<br>#替换你的AstrBot唤醒词<br>lmc是连接管理指令组<br>to是切换子指令<br>gb2替换一个存在的<连接名> | 🔍️你可以先使用`#lmc <连接名>`查看详情 |
+
+| `能改什么模型？从接入点获取` | `密钥有效性检查` |
+| :---: | :---: |
+| <img src="./preview/lmc5.jpg" width="400"> | <img src="./preview/lmc6.jpg" width="400"> |
+| `🛑规则过滤生图模型<br>bb替换一个存在的<连接名> | 🪧基于模型获取实现，简易但无成本 |
 
 ### 精心打磨的提示词管理系统
 | `带排序&预览的详细列表` | `太长不看？来个省流版` |
@@ -306,10 +311,13 @@
 ## ✔ 计划清单
 
 **欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
+<br>0.3.0发版后暂缓功能性更新，接下来几个版本将会针对代码质量和性能进行优化
 
 ### 第一序列
 * ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
 * ~~关键词搜索预设~~
+* ~~获取接入点模型列表~~
+* ~~简易的key有效性检查（无成本，基于/models）~~
 * 反推提示词
 * 会话式采集，作为移动端多图的一种fallback
 * #lmc修改后像#lmk一样展示修改效果

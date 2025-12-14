@@ -2,10 +2,13 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Tuple, Callable, TYPE_CHECKING
 
+from astrbot.api import logger
+from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.session_waiter import SessionController, session_waiter
 from astrbot.api.star import Context
 
+from ..api_client import ApiRequestConfig, KeyStatus
 from ..utils.parser import CommandParser
 from ..utils.serializer import ConfigSerializer
 from ..utils.views import ResponsePresenter
@@ -13,6 +16,72 @@ from .prompt import PromptManager
 
 if TYPE_CHECKING:
     from ..services.generation import GenerationService
+
+def _extract_message_id(resp: Any) -> int | None:
+    if not resp:
+        return None
+    try:
+        return int(resp)
+    except (ValueError, TypeError):
+        pass
+
+    if isinstance(resp, dict):
+        if "data" in resp and isinstance(resp["data"], dict):
+            mid = resp["data"].get("message_id")
+            if mid:
+                return int(mid)
+        if "message_id" in resp:
+            return int(resp["message_id"])
+
+    if hasattr(resp, "message_id"):
+        try:
+            return int(resp.message_id)
+        except (ValueError, TypeError):
+            pass
+
+    return None
+
+async def _send_message(event: AstrMessageEvent, payload: Any) -> int | None:
+    if hasattr(event, "_parse_onebot_json") and hasattr(event.bot, "call_action"):
+        try:
+            chain = payload.chain if hasattr(payload, "chain") else payload
+            if isinstance(chain, list):
+                msg_chain = MessageChain(chain=chain)
+                obmsg = await event._parse_onebot_json(msg_chain)
+                params = {"message": obmsg}
+
+                if gid := event.get_group_id():
+                    params["group_id"] = int(gid)
+                    action = "send_group_msg"
+                elif uid := event.get_sender_id():
+                    params["user_id"] = int(uid)
+                    action = "send_private_msg"
+                else:
+                    raise ValueError("无法确定发送目标")
+
+                resp = await event.bot.call_action(action, **params)
+                return _extract_message_id(resp)
+        except Exception as e:
+            pass
+    resp = await event.send(payload)
+    return _extract_message_id(resp)
+
+async def _safe_recall(event: AstrMessageEvent, message_obj: Any):
+    if not message_obj:
+        return
+
+    msg_id = _extract_message_id(message_obj)
+
+    if msg_id:
+        try:
+            if hasattr(event.bot, "delete_msg"):
+                await event.bot.delete_msg(message_id=msg_id)
+            elif hasattr(event.bot, "recall_message"):
+                await event.bot.recall_message(msg_id)
+        except Exception as e:
+            logger.debug(f"撤回等待消息失败 (可忽略): {e}")
+    else:
+        logger.debug(f"无法从对象中提取 message_id: {message_obj}")
 
 class DataStrategy(ABC):
     """抽象基类"""
@@ -246,15 +315,67 @@ class ListKeyStrategy(DataStrategy):
         preset_name: str, 
         key_list: List[str], 
         config_mgr, 
+        api_client = None,
+        preset_config: Dict[str, Any] = None,
+        raw_config: Dict[str, Any] = None,
         save_callback: Callable | None = None
     ):
         super().__init__("API Key", config_mgr)
         self.preset_name = preset_name
         self.data = key_list
+        self.api_client = api_client
+        self.preset_config = preset_config or {}
+        self.raw_config = raw_config or {}
         self.save_callback = save_callback
+        self.status_map: Dict[str, str] = {}
 
     def get_summary(self, simple: bool = False) -> str:
-        return ResponsePresenter.format_key_list(self.preset_name, self.data, self.mgr.main_prefix)
+        return ResponsePresenter.format_key_list(
+            self.preset_name, 
+            self.data, 
+            self.mgr.main_prefix,
+            status_map=self.status_map
+        )
+
+    async def process(self, event: AstrMessageEvent, sub_cmd: str, args: List[str]):
+        if sub_cmd in ["l", "list"] or (not sub_cmd and not args):
+            if not self.data:
+                yield event.plain_result(f"✨ {self.item_name}列表为空。")
+                return
+
+            waiting_msg = None
+            if self.api_client and self.preset_config:
+                waiting_msg_id = await _send_message(
+                    event,
+                    event.plain_result(f"🔍 正在检测 {len(self.data)} 个密钥的可用性，请稍候...")
+                )
+                await self._check_keys_parallel()
+
+            yield event.plain_result(self.get_summary())
+            await _safe_recall(event, waiting_msg_id)
+            return
+
+        async for res in super().process(event, sub_cmd, args):
+            yield res
+
+    async def _check_keys_parallel(self):
+        conn_conf = self.raw_config.get("Connection_Config", {})
+        use_proxy = conn_conf.get("use_proxy", False)
+        proxy_url = conn_conf.get("proxy_url") if use_proxy else None
+        base_request_config = ApiRequestConfig(
+            api_keys=[],
+            api_type=self.preset_config.get("api_type", "google"),
+            api_base=self.preset_config.get("api_url", ""),
+            proxy_url=proxy_url
+        )
+        semaphore = asyncio.Semaphore(5)
+        async def check_single(key: str):
+            async with semaphore:
+                status = await self.api_client.test_key_availability(key, base_request_config)
+                self.status_map[key] = status
+        tasks = [check_single(k) for k in self.data]
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def do_delete(self, key: str) -> Tuple[bool, str]:
         if key.lower() == "all":
@@ -430,7 +551,31 @@ class ConnectionStrategy(DataStrategy):
             if key not in self.data: 
                 yield event.plain_result(ResponsePresenter.item_not_found(self.item_name, key))
             else:
-                yield event.plain_result(ResponsePresenter.format_connection_detail(key, self.data[key], self.mgr.main_prefix))
+                target_data = self.data[key]
+                waiting_msg_id = await _send_message(
+                    event, 
+                    event.plain_result(f"🔍 正在连接服务器获取 [{key}] 的可用模型列表...")
+                )
+
+                temp_conf = ApiRequestConfig(
+                    api_keys=target_data.get("api_keys", []),
+                    api_type=target_data.get("api_type", "google"),
+                    api_base=target_data.get("api_url", ""),
+                    proxy_url=self.raw_config.get("Connection_Config", {}).get("proxy_url")
+                )
+
+                fetched_models = []
+                if self.gen_service and self.gen_service.api_client:
+                    fetched_models = await self.gen_service.api_client.get_available_models(temp_conf)
+                yield event.plain_result(
+                    ResponsePresenter.format_connection_detail(
+                        key, 
+                        target_data, 
+                        self.mgr.main_prefix, 
+                        available_models=fetched_models
+                    )
+                )
+                await _safe_recall(event, waiting_msg_id)
             return
 
         if len(args) < 2:

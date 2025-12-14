@@ -32,6 +32,12 @@ from .utils.result import Result, Ok, Err
 from .utils.zai import ZaiTokenManager
 
 
+class KeyStatus:
+    VALID = "valid"
+    INVALID = "invalid"
+    UNKNOWN = "unknown"
+
+
 class APIErrorType(Enum):
     INVALID_ARGUMENT = "invalid_argument"
     AUTH_FAILED = "auth_failed"
@@ -96,6 +102,10 @@ class BaseGenerationProvider(ABC):
 
     @abstractmethod
     async def generate(self, api_key: str, config: 'ApiRequestConfig', images: List[bytes]) -> 'GenResult':
+        pass
+
+    @abstractmethod
+    async def get_models(self, api_key: str, config: 'ApiRequestConfig') -> List[str]:
         pass
 
     def analyze_exception(self, e: Exception) -> Tuple[APIError, bool]:
@@ -245,6 +255,25 @@ class GoogleProvider(BaseGenerationProvider):
             error_obj, _ = self.analyze_exception(last_exception)
             raise error_obj
 
+    async def get_models(self, api_key: str, config: 'ApiRequestConfig') -> List[str]:
+        http_options = HttpOptions(
+            base_url=config.api_base,
+            api_version="v1beta",
+            timeout=15000,
+        )
+        client = genai.Client(api_key=api_key, http_options=http_options)
+
+        try:
+            models_page = await asyncio.to_thread(client.models.list)
+            model_ids = []
+            for m in models_page:
+                name = m.name.replace("models/", "")
+                if "image" in name.lower() or "banana" in name.lower():
+                    model_ids.append(name)
+            return sorted(model_ids)
+        except Exception as e:
+            logger.warning(f"Google 获取模型列表失败: {e}")
+            return []
 
 class OpenAIProvider(BaseGenerationProvider):
     @staticmethod
@@ -602,6 +631,56 @@ class OpenAIProvider(BaseGenerationProvider):
 
         return None
 
+    async def get_models(self, api_key: str, config: 'ApiRequestConfig') -> List[str]:
+        request_api_key = api_key
+        if config.api_type.lower() == "zai":
+            if ZaiTokenManager:
+                try:
+                    request_api_key = await ZaiTokenManager.get_access_token(api_key, proxy=config.proxy_url)
+                except Exception:
+                    pass
+
+        base = (config.api_base or "").rstrip("/")
+        if not base:
+            target_url = "https://api.openai.com/v1/models"
+        else:
+            if base.endswith("/chat/completions"):
+                target_url = base.replace("/chat/completions", "/models")
+            elif base.endswith("/v1"):
+                target_url = f"{base}/models"
+            else:
+                target_url = f"{base}/v1/models"
+
+        headers = {
+            "Authorization": f"Bearer {request_api_key}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            async with self.session.get(target_url, headers=headers, proxy=config.proxy_url, timeout=15) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "data" in data and isinstance(data["data"], list):
+                        all_ids = [item["id"] for item in data["data"] if "id" in item]
+
+                        filter_keywords = [
+                            "banana", "image", "flux", "pic", "paint", 
+                            "diffusion", "journey", "dall", "nai", "sdxl"
+                        ]
+
+                        filtered_models = []
+                        for mid in all_ids:
+                            mid_lower = mid.lower()
+                            if any(k in mid_lower for k in filter_keywords):
+                                filtered_models.append(mid)
+
+                        return sorted(filtered_models)
+                else:
+                    logger.warning(f"获取模型列表失败 HTTP {resp.status}: {await resp.text()}")
+        except Exception as e:
+            logger.warning(f"获取模型列表网络异常: {e}")
+
+        return []
 
 class APIClient:
     def __init__(self):
@@ -810,3 +889,37 @@ class APIClient:
             return Err(last_error)
         else:
             return Err(APIError(APIErrorType.UNKNOWN, "所有重试均失败，且无明确错误信息"))
+
+    async def get_available_models(self, config: ApiRequestConfig) -> List[str]:
+        if not config.api_keys:
+            return []
+
+        api_key = config.api_keys[0]
+
+        try:
+            await self.get_session()
+            provider = self._get_provider(config.api_type)
+            return await provider.get_models(api_key, config)
+        except Exception as e:
+            logger.error(f"Fetch models error: {e}")
+            return []
+
+    async def test_key_availability(self, key: str, config: ApiRequestConfig) -> str:
+        try:
+            await self.get_session()
+            provider = self._get_provider(config.api_type)
+
+            models = await provider.get_models(key, config)
+
+            if models:
+                return KeyStatus.VALID
+
+            return KeyStatus.INVALID
+
+        except APIError as e:
+            if e.error_type in [APIErrorType.AUTH_FAILED, APIErrorType.QUOTA_EXHAUSTED]:
+                return KeyStatus.INVALID
+            return KeyStatus.UNKNOWN
+        except Exception as e:
+            logger.debug(f"Key check failed with exception: {e}")
+            return KeyStatus.UNKNOWN
