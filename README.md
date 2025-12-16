@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.0-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.1-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -27,6 +27,7 @@
 * 自定义&扩展性<br>
 
 ⚠小心刷屏：√生成后撤回等待词 √定时撤回生成结果，强烈建议配合AstrBot的 **长文本转发功能** 使用
+<br>0.3.1大重构已完成，接下来小修小补~
 
 ## 🖼️ 功能预览
 **不想看长篇大论？几张图带你速览插件特色**
@@ -51,7 +52,7 @@
 | `能改什么模型？从接入点获取` | `密钥有效性检查` |
 | :---: | :---: |
 | <img src="./preview/lmc5.jpg" width="400"> | <img src="./preview/lmc6.jpg" width="400"> |
-| `🛑规则过滤生图模型<br>bb替换一个存在的<连接名> | 🪧基于模型获取实现，简易但无成本 |
+| 🛑规则过滤生图模型<br>bb替换一个存在的<连接名> | 🪧基于模型获取实现，简易但无成本 |
 
 ### 精心打磨的提示词管理系统
 | `带排序&预览的详细列表` | `太长不看？来个省流版` |
@@ -311,17 +312,23 @@
 ## ✔ 计划清单
 
 **欢迎 ISSUES/PR 功能建议可能会看喜好加 初心是自用**
-<br>0.3.0发版后暂缓功能性更新，接下来几个版本将会针对代码质量和性能进行优化
 
 ### 第一序列
 * ~~撤回功能（生成后撤回等待词，定时撤回图片）~~
 * ~~关键词搜索预设~~
 * ~~获取接入点模型列表~~
 * ~~简易的key有效性检查（无成本，基于/models）~~
+* 更新README
+* 临时调试参数
+* 批量重命名/删除
+* 失败时提示当前key
+* 改进掩码机制
 * 反推提示词
 * 会话式采集，作为移动端多图的一种fallback
-* #lmc修改后像#lmk一样展示修改效果
+* ~~#lmc修改后像#lmk一样展示修改效果~~
 ### 第二序列
+* 映射词
+* 透明处理
 参考 piexian/astrbot_plugin_gemini_image_generation 引入先进处理：
 * 添加gemini的openai方式作为fallback
 * OpenAI 兼容接口下的传参
@@ -336,9 +343,6 @@
 <br>🔧 且过多画图插件都喜欢塞个工具调用，这在使用同类插件时引入了【冗余&冲突】，和我的插件宗旨相悖
 
 ## ❓ 常见问题
-
-### 关于google API
-为了兼容性&健壮性使用的是genai sdk实现，代价是不能传入插件内的proxy设置。因此使用google官方API时，请确保在AstrBot或环境变量中进行了正确的代理配置。
 
 ### 关于zAI
 zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（貌似3个小时有效期？），均通过F12获取

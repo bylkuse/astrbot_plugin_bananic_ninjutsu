@@ -44,9 +44,9 @@
           "description": "预设配置JSON"
         },
         "default": [
-          "{\"name\": \"GoogleDefault\", \"api_type\": \"google\", \"api_url\": \"https://generativelanguage.googleapis.com\", \"model\": \"gemini-2.5-flash-image-preview\", \"api_keys\": []}",
-          "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://api.openai.com/v1/chat/completions\", \"model\": \"gpt-4o\", \"api_keys\": []}",
-		  "{\"name\": \"zAI\", \"api_type\": \"zai\", \"api_url\": \"https://zai.is/api/v1/chat/completions\", \"model\": \"gemini-3-pro-image-preview\", \"api_keys\": []}"
+          "{\"name\": \"GoogleDefault\", \"api_type\": \"google\", \"api_url\": \"https://generativelanguage.googleapis.com\", \"model\": \"gemini-2.5-flash-image-preview\",\"stream\": null, \"api_keys\": []}",
+          "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://api.openai.com/v1/chat/completions\", \"model\": \"gpt-4o\",\"stream\": false, \"api_keys\": []}",
+		  "{\"name\": \"zAI\", \"api_type\": \"zai\", \"api_url\": \"https://zai.is/api/v1/chat/completions\", \"model\": \"gemini-3-pro-image-preview\",\"stream\": true, \"api_keys\": []}"
         ]
       },
       "timeout": {
@@ -138,15 +138,15 @@
         "default": 3
       },
       "enable_user_limit": {
-        "description": "启用个人次数限制",
+        "description": "启用次数消耗",
         "type": "bool",
-        "hint": "开启后，将独立计算每个QQ号的使用次数。",
+        "hint": "开启后，需要消耗个人或群组次数进行生图。",
         "default": false
       },
       "enable_group_limit": {
-        "description": "启用群组次数限制",
+        "description": "优先消耗群组次数",
         "type": "bool",
-        "hint": "开启后，将计算群内所有成员的总使用次数。",
+        "hint": "开启后，只有群组次数不足后开始消耗个人次数。",
         "default": false
       },
       "user_whitelist": {
