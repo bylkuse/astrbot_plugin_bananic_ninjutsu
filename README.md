@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.1-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.2-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -345,7 +345,8 @@
 ## ❓ 常见问题
 
 ### 关于zAI
-zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（貌似3个小时有效期？），均通过F12获取
+多半是似了喵，一直在做封堵2api的维护，后面可能会考虑移除该适配器
+<br>zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（貌似3个小时有效期？），均通过F12获取
 <br>Discord Token在Discord登录后，携带 /api 请求的 Authorization 字段中找到
 <br>zAI Token只需要在 https://zai.is/ 中，找到存储的 token 字段
 
@@ -362,25 +363,43 @@ Gemini Image https://github.com/railgun19457/astrbot_plugin_gemini_image/
 ## 🌳 目录结构
 ```
 astrbot_plugin_bananic_ninjutsu/
-├── core/                 # 核心层
-│   ├── config_mgr.py         # 各类预设的CRUD操作
-│   ├── images.py             # 图片预处理
-│   ├── prompt.py             # 提示词&变量解析
-│   └── stats.py              # 统计&限流&限额
-├── services/             # 服务层
-│   └── generation.py         # 生图工作流
-├── utils/                # 工具层
-│   ├── parser.py             # 参数系统
-│   ├── serializer.py         # 序列化&反序列化
-│   ├── result.py             # Result容器
-│   ├── zai.py                # zAI token
-│   └── views.py              # 视图&提示信息
-├── _conf_schema.json     # 配置文件模板
-├── metadata.yaml         # 注册信息
-├── requirements.txt      # 依赖声明
-├── logo.png              # logo
-├── api_client.py         # 通信层
-└── main.py               # 指令入口&逻辑
+├── handlers/                 # [接口层] 控制器
+│   ├── __init__.py
+│   ├── workflow.py               # 处理 /文生图 等生图指令，解析参数，调用Service，发送结果
+│   ├── management.py             # 处理 /lm次数 /lm连接 等管理指令
+│   └── platform.py               # 封装 AstrBot，aiocqhttp，OneBot的特有方法
+│
+├── services/                 # [应用层] 编排业务流程
+│   ├── __init__.py
+│   ├── generation.py             # 生图：检查配额->选Key->调API
+│   ├── config.py                 # 配置：增删改查预设
+│   ├── stats.py                  # 配额：签到、统计、限额、限流
+│   └── resource.py               # 资源调度&缓存清理
+│
+├── domain/                   # [领域层] 业务规则 & 数据模型
+│   ├── __init__.py
+│   ├── model.py                  # 定义 dataclass
+│   ├── prompt.py                 # 提示词解析、变量替换
+│   └── quota.py                  # 使用权限
+│
+├── providers/                # [通信层] API 适配
+│   ├── __init__.py               # API 基类
+│   ├── manager.py                # 密钥 & Client 管理
+│   ├── openai.py                 # openai
+│   ├── zai.py                    # zai（合并discord token换取逻辑，RIP？）
+│   └── google.py                 # google
+│
+├── utils/                    # [工具层] 辅助方法
+│   ├── __init__.py
+│   ├── parser.py                 # 参数解析
+│   ├── image.py                  # 图像处理
+│   ├── storage.py                # 文件读写
+│   └── result.py                 # 封装 Result 对象
+│
+├──_conf_schema.json          # 插件配置模板
+├── views.py                  # [视图层] 将 Result 对象转换为用户可读的字符串
+└── main.py                   # →→→插件入口←←← 负责指令路由、依赖注入 (DI)
+
 ```
 
 ---

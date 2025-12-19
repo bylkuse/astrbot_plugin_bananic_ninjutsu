@@ -11,11 +11,20 @@ from ..utils.result import Result, Ok, Err
 from . import BaseProvider
 
 class ProviderManager:
+    ERROR_CONFIG = {
+        APIErrorType.AUTH_FAILED:     ("🔒️", 3600 * 24),
+        APIErrorType.QUOTA_EXHAUSTED: ("💰️", 3600 * 5),
+        APIErrorType.RATE_LIMIT:      ("🛡️", 300),
+        APIErrorType.SERVER_ERROR:    ("⌛", 60),
+        APIErrorType.UNKNOWN:         ("❌", 0),
+    }
+
     def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
         self._providers: Dict[str, BaseProvider] = {}
         self._cooldown_keys: Dict[str, float] = {}
+        self._key_status_cache: Dict[str, str] = {}
         self._key_lock = asyncio.Lock()
         self._key_cursor = 0
 
@@ -82,7 +91,6 @@ class ProviderManager:
             if self._key_cursor >= len(all_keys):
                 self._key_cursor = 0
 
-            start_cursor = self._key_cursor
             chosen_key = None
 
             for _ in range(len(all_keys)):
@@ -104,45 +112,88 @@ class ProviderManager:
                 f"所有 Key 均在冷却中，请等待约 {int(min_wait)} 秒。",
             )
 
+    def _infer_error_type(self, e: Exception) -> APIErrorType:
+        if isinstance(e, PluginError):
+            return e.error_type
+
+        if isinstance(e, asyncio.TimeoutError):
+            return APIErrorType.SERVER_ERROR
+
+        msg = str(e).lower()
+        if "401" in msg or "auth" in msg or "invalid" in msg:
+            return APIErrorType.AUTH_FAILED
+        if "429" in msg or "quota" in msg or "billing" in msg or "402" in msg:
+            if "quota" in msg or "billing" in msg or "402" in msg:
+                return APIErrorType.QUOTA_EXHAUSTED
+            return APIErrorType.RATE_LIMIT
+        if "connect" in msg or "timeout" in msg:
+            return APIErrorType.SERVER_ERROR
+
+        return APIErrorType.UNKNOWN
+
     def _mark_key_cooldown(self, key: str, error_type: APIErrorType):
-        duration = 0
-        if error_type == APIErrorType.RATE_LIMIT:
-            duration = 60
-        elif error_type in [APIErrorType.AUTH_FAILED, APIErrorType.QUOTA_EXHAUSTED]:
-            duration = 300
+        config = self.ERROR_CONFIG.get(error_type)
+        if not config:
+            return
+
+        icon, duration = config
 
         if duration > 0:
             expire = time.time() + duration
             self._cooldown_keys[key] = expire
-            masked = key[:4] + "..." + key[-4:] if len(key) > 8 else key
-            logger.warning(f"[ProviderManager] Key {masked} 进入冷却池 ({duration}s). 原因: {error_type.name}")
+            self._key_status_cache[key] = icon
 
-    async def test_key_availability(self, preset: ConnectionPreset, key: str) -> str:
+            masked = key[:4] + "..." + key[-4:] if len(key) > 8 else key
+            logger.warning(f"[ProviderManager] Key {masked} 进入冷却池 ({duration}s). 状态: {icon} 原因: {error_type.name}")
+
+    def _mark_key_success(self, key: str):
+        if key in self._key_status_cache:
+            self._key_status_cache.pop(key)
+        if key in self._cooldown_keys:
+            del self._cooldown_keys[key]
+
+    def get_cached_key_status(self, key: str) -> Optional[str]:
+        return self._key_status_cache.get(key)
+
+    async def test_key_availability(self, preset: ConnectionPreset, key: str, proxy_url: Optional[str] = None) -> str:
+        if key in self._cooldown_keys:
+            expiry = self._cooldown_keys[key]
+            if time.time() < expiry:
+                cached_icon = self._key_status_cache.get(key, "❌")
+                return f"{cached_icon} (冷却中)"
+
+        status_icon = "❌ (错误)"
         try:
             dummy_req = ApiRequest(
                 api_key=key,
                 preset=preset,
                 gen_config=GenerationConfig(prompt="test"),
-                debug_mode=False
+                debug_mode=False,
+                proxy_url=proxy_url
             )
 
             provider = await self._get_provider_instance(preset.api_type)
             models = await asyncio.wait_for(provider.get_models(dummy_req), timeout=10)
 
             if models:
+                self._mark_key_success(key)
                 return "✅"
             else:
                 return "✅ (无模型)"
 
-        except asyncio.TimeoutError:
-            return "⚠️ (超时)"
         except Exception as e:
-            err_msg = str(e)
-            if "401" in err_msg or "auth" in err_msg.lower():
-                return "❌ (鉴权失败)"
-            if "429" in err_msg or "quota" in err_msg.lower():
-                return "⛔ (额度/限流)"
-            return "❌"
+            if isinstance(e, asyncio.TimeoutError):
+                self._mark_key_cooldown(key, APIErrorType.SERVER_ERROR)
+                return "⌛ (超时)"
+
+            error_type = self._infer_error_type(e)
+
+            if error_type != APIErrorType.UNKNOWN:
+                self._mark_key_cooldown(key, error_type)
+                icon, _ = self.ERROR_CONFIG.get(error_type, ("❌", 0))
+                return icon
+
+            return "❌ (错误)"
 
     async def generate(self, request: ApiRequest) -> Result[GenResult, PluginError]:
         if request.debug_mode:
@@ -178,6 +229,7 @@ class ProviderManager:
             try:
                 result = await provider.generate(request)
                 if result.is_ok():
+                    self._mark_key_success(current_key)
                     return result
                 error = result.error
             except Exception as e:
@@ -193,11 +245,11 @@ class ProviderManager:
                 ]
             )
 
+            self._mark_key_cooldown(current_key, error.error_type)
+
             if not is_retryable:
                 logger.warning(f"[ProviderManager] 遇到致命错误，停止重试: {error}")
                 return Err(error)
-
-            self._mark_key_cooldown(current_key, error.error_type)
 
             logger.warning(
                 f"[ProviderManager] 生成失败 (尝试 {attempt+1}/{max_retries}) "

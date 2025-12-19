@@ -114,7 +114,7 @@ class BaseProvider(ABC):
                     return await resp.read()
                 raise PluginError(APIErrorType.SERVER_ERROR, f"下载图片失败 HTTP {resp.status}")
         except Exception as e:
-             raise PluginError(APIErrorType.SERVER_ERROR, f"下载图片异常: {str(e)}")
+            raise PluginError(APIErrorType.SERVER_ERROR, f"下载图片异常: {str(e)}")
 
     def convert_exception(self, e: Exception) -> Tuple[PluginError, bool]:
         if isinstance(e, PluginError):

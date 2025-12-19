@@ -10,16 +10,34 @@ from .domain.model import (
 
 class ResponsePresenter:
     _ERROR_MESSAGES = {
-        APIErrorType.INVALID_ARGUMENT: "💡 请求无效\n🔧 检查提示词、参数格式。",
-        APIErrorType.AUTH_FAILED: "💡 鉴权失败\n🔧 Key可能失效或无权限。",
-        APIErrorType.QUOTA_EXHAUSTED: "💡 额度耗尽\n🔧 余额不足或Key冷却中。",
-        APIErrorType.NOT_FOUND: "💡 接入错误\n🔧 模型名或接口有误。",
-        APIErrorType.RATE_LIMIT: "💡 超额请求\n🔧 节点或账户暂时受限。",
-        APIErrorType.SERVER_ERROR: "💡 网络异常\n🔧 上游服务波动。",
-        APIErrorType.SAFETY_BLOCK: "❌ 安全拦截\n🔧 内容包含敏感信息。",
+        APIErrorType.INVALID_ARGUMENT: "❓️ 请求无效\n🔧 检查提示词、参数格式。",
+        APIErrorType.AUTH_FAILED: "🔒︎ 鉴权失败\n🔧 Key可能失效或无权限。",
+        APIErrorType.QUOTA_EXHAUSTED: "💰️ 额度耗尽\n🔧 余额不足或Key冷却中。",
+        APIErrorType.NOT_FOUND: "🔍 接入错误\n🔧 模型名或接口有误。",
+        APIErrorType.RATE_LIMIT: "🛡 超额请求\n🔧 节点或账户暂时受限。",
+        APIErrorType.SERVER_ERROR: "🌊 网络异常\n🔧 上游服务波动。",
+        APIErrorType.SAFETY_BLOCK: "🚨 安全拦截\n🔧 内容包含敏感信息。",
         APIErrorType.DEBUG_INFO: "🛠️ 调试信息",
         APIErrorType.UNKNOWN: "❌ 未知错误\n🔧 请检查日志详情。",
     }
+
+    @staticmethod
+    def _smart_mask(text: Any, max_reveal: int = 6) -> str:
+        if not text: return ""
+        s = str(text)
+        length = len(s)
+
+        if length < 5:
+            return "*" * length
+
+        part = length // 3
+        reveal_head = min(part, max_reveal)
+        reveal_tail = min(part, max_reveal)
+
+        reveal_head = max(1, reveal_head)
+        reveal_tail = max(1, reveal_tail)
+
+        return f"{s[:reveal_head]}......{s[-reveal_tail:]}"
 
     @staticmethod
     def make_preview(text: str, limit: int = 50, oneline: bool = False) -> str:
@@ -199,9 +217,7 @@ class ResponsePresenter:
             lines = ["👤 个人活跃 TOP10:"]
             for i, (uid, c) in enumerate(top_users[:10]):
                 icon = ResponsePresenter._get_rank_icon(i)
-                masked_uid = str(uid)
-                if len(masked_uid) > 7:
-                    masked_uid = masked_uid[:3] + "****" + masked_uid[-4:]
+                masked_uid = ResponsePresenter._smart_mask(uid)
                 lines.append(f"{icon} {masked_uid}  —  {c}次")
             msg_parts.append("\n".join(lines))
             has_data = True
@@ -266,13 +282,8 @@ class ResponsePresenter:
         lines = [f"🔑 预设 [{preset_name}] 密钥列表 (共{len(keys)}个):"]
 
         for i, k in enumerate(keys):
-            # 1. 掩码处理
-            if len(k) > 12:
-                masked = f"{k[:8]}......{k[-4:]}"
-            else:
-                masked = k
+            masked = ResponsePresenter._smart_mask(k, max_reveal=8)
 
-            # 2. 状态追加
             status_suffix = ""
             if status_map and k in status_map:
                 status_suffix = f" {status_map[k]}"

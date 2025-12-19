@@ -423,6 +423,13 @@ class ManagementHandler:
 
         if not args or args[0].lower() in ["l", "list"]:
             status_map = {}
+            for k in preset.api_keys:
+                cached_status = self.provider_mgr.get_cached_key_status(k)
+                if cached_status:
+                    status_map[k] = cached_status
+
+            conn_conf = self.cfg._astr_config.get("Connection_Config", {})
+            proxy_url = conn_conf.get("proxy_url")
 
             if is_explicit_target and preset.api_keys:
                 waiting_msg_id = await adapter.send_text(f"🔍 正在检测 [{target_name}] 的 {len(preset.api_keys)} 个密钥可用性，请稍候...")
@@ -430,7 +437,7 @@ class ManagementHandler:
                 semaphore = asyncio.Semaphore(5)
                 async def _check(k):
                     async with semaphore:
-                        res = await self.provider_mgr.test_key_availability(preset, k)
+                        res = await self.provider_mgr.test_key_availability(preset, k, proxy_url=proxy_url)
                         status_map[k] = res
 
                 tasks = [_check(k) for k in preset.api_keys]
