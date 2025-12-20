@@ -3,7 +3,7 @@ import base64
 import time
 import re
 import asyncio
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, parse_qs
 from dataclasses import replace
 

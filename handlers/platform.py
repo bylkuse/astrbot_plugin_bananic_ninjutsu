@@ -3,13 +3,11 @@ import base64
 import re
 import math
 import pathlib
-from urllib.parse import urlparse, parse_qs
 from typing import Any, List, Optional, Union, Set
 
 from astrbot.api import logger
-from astrbot.core.message.components import At, Image, Reply, Plain, Node, Nodes
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.message.message_event_result import MessageChain
+from astrbot.api.platform import At, Image, Reply, Plain, Node, Nodes
+from astrbot.api.event import AstrMessageEvent, MessageChain
 
 class PlatformAdapter:
     _recall_tasks: Set[asyncio.Task] = set()

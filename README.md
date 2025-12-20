@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.2-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.3-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -26,7 +26,7 @@
 * 代码&性能优化
 * 自定义&扩展性<br>
 
-⚠小心刷屏：√生成后撤回等待词 √定时撤回生成结果 √已内置合并转发 ~~强烈建议配合AstrBot的 **长文本转发功能** 使用~~
+⚠小心刷屏：√生成后撤回等待词 √定时撤回生成结果 √已内置合并转发 ~~建议配合AstrBot **长文本转发功能** 使用~~
 <br>0.3.1大重构已完成，接下来小修小补~
 
 ## 🖼️ 功能预览
@@ -364,7 +364,7 @@ Gemini Image https://github.com/railgun19457/astrbot_plugin_gemini_image/
 astrbot_plugin_bananic_ninjutsu/
 ├── handlers/                 # [接口层] 控制器
 │   ├── __init__.py
-│   ├── workflow.py               # 处理 /文生图 等生图指令，解析参数，调用Service，发送结果
+│   ├── workflow.py               # 处理 /文生图 等生图指令，调用Service，发送结果
 │   ├── management.py             # 处理 /lm次数 /lm连接 等管理指令
 │   └── platform.py               # 封装 AstrBot，aiocqhttp，OneBot的特有方法
 │

@@ -2,7 +2,7 @@ import json
 import base64
 import asyncio
 import aiohttp
-from typing import List, Optional, Any, Dict
+from typing import List, Any, Dict
 
 from astrbot.api import logger
 

@@ -2,10 +2,9 @@ import asyncio
 import base64
 import json
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Optional, Dict, Any, Union
+from typing import List, Tuple, Optional, Dict, Any
 
 import aiohttp
-from astrbot.api import logger
 
 from ..domain.model import ApiRequest, GenResult, PluginError, APIErrorType
 from ..utils.result import Result, Err

@@ -1,11 +1,9 @@
 import asyncio
-from typing import Optional, AsyncGenerator, Any
+from typing import Optional
 
-from astrbot.api import logger
-from astrbot.api.event import filter
+from astrbot.api import logger, AstrBotConfig
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, StarTools
-from astrbot.core import AstrBotConfig
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .domain.prompt import PromptResolver
 from .providers.manager import ProviderManager

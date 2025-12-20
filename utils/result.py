@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Generic, TypeVar, Union, Callable
+from typing import Generic, TypeVar, Union
 
 T = TypeVar("T")
 E = TypeVar("E")

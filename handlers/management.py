@@ -1,16 +1,14 @@
 import asyncio
-from typing import List, Optional, Tuple
+from typing import List
 
 from astrbot.api import logger
-from astrbot.core.message.components import At
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.utils.session_waiter import SessionController, session_waiter
+from astrbot.api.platform import At, AstrMessageEvent
+from astrbot.api.util import SessionController, session_waiter
 
-from ..domain.model import ConnectionPreset, ApiType, GenerationConfig, ApiRequest
+from ..domain.model import ConnectionPreset, ApiType
 from ..domain.prompt import PromptResolver
 from ..services.config import ConfigService, KVHelper
 from ..services.stats import StatsService
-from ..services.resource import ResourceService
 from ..providers.manager import ProviderManager
 from ..utils.parser import CommandParser
 from ..views import ResponsePresenter

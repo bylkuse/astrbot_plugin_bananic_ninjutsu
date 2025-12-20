@@ -2,8 +2,7 @@ from typing import Optional, List, Any, Tuple
 
 from astrbot.api import logger
 from astrbot.api.star import Context
-from astrbot.core.platform.astr_message_event import AstrMessageEvent
-from astrbot.core.message.components import Image, Plain, At
+from astrbot.api.platform import AstrMessageEvent, Image, Plain, At
 
 from ..domain.model import (
     GenerationConfig, 

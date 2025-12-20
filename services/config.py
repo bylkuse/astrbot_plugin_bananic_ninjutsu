@@ -2,8 +2,7 @@ import json
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 
-from astrbot.api import logger
-from astrbot.core import AstrBotConfig
+from astrbot.api import logger, AstrBotConfig
 from astrbot.api.star import Context
 
 from ..domain.model import ConnectionPreset, ApiType

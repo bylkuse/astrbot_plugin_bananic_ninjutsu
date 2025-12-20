@@ -1,5 +1,4 @@
 import shlex
-import re
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Set
 

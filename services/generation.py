@@ -1,22 +1,17 @@
-import asyncio
 import time
-from datetime import datetime
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
-
-from astrbot.api import logger
 
 from ..domain.model import (
     ApiRequest, GenResult, GenerationConfig, 
-    ConnectionPreset, PluginError, APIErrorType
+    PluginError, APIErrorType
 )
-from ..domain.quota import QuotaTransaction, QuotaContext
+from ..domain.quota import QuotaTransaction
 from ..domain.prompt import PromptResolver
 from ..providers.manager import ProviderManager
 from ..utils.result import Result, Ok, Err
 
 if TYPE_CHECKING:
     from .config import ConfigService
-    from .resource import ResourceService
     from .stats import StatsService 
 
 class GenerationService:
