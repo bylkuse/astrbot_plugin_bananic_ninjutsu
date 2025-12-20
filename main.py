@@ -5,15 +5,11 @@ from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, StarTools
 
-from .domain.prompt import PromptResolver
-from .providers.manager import ProviderManager
-from .services.config import ConfigService
-from .services.stats import StatsService
-from .services.resource import ResourceService
-from .services.generation import GenerationService
-from .handlers.management import ManagementHandler
-from .handlers.workflow import WorkflowHandler
-from .utils.parser import CommandParser
+from .domain import PromptResolver
+from .providers import ProviderManager
+from .services import ConfigService, StatsService, ResourceService, GenerationService
+from .handlers import ManagementHandler, WorkflowHandler
+from .utils import CommandParser
 
 class Ninjutsu(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -123,7 +119,7 @@ class Ninjutsu(Star):
 
     @filter.command("文生图", alias=["lmt"], prefix_optional=True)
     async def cmd_text_to_image(self, event: AstrMessageEvent):
-        """文生图入口 - 这是一个普通协程，不涉及 yield"""
+        """文生图入口"""
         await self._ensure_initialized()
         await self.workflow_handler.handle_text_to_image(event)
         event.stop_event()

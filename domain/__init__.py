@@ -8,7 +8,7 @@ from .model import (
     GenResult,
     UserQuota
 )
-from .prompt import PromptResolver
+from .prompt import VariableDefinition, PromptResolver
 from .quota import QuotaContext, QuotaTransaction
 
 __all__ = [
@@ -20,7 +20,8 @@ __all__ = [
     "ApiRequest",
     "GenResult",
     "UserQuota",
+    "VariableDefinition",
     "PromptResolver",
     "QuotaContext",
-    "QuotaTransaction",
+    "QuotaTransaction"
 ]

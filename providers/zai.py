@@ -3,15 +3,15 @@ import base64
 import time
 import re
 import asyncio
+import aiohttp
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, parse_qs
 from dataclasses import replace
 
-import aiohttp
 from astrbot.api import logger
 
-from ..domain.model import ApiRequest, GenResult, PluginError, APIErrorType
-from ..utils.result import Result, Ok, Err
+from ..domain import ApiRequest, GenResult, PluginError, APIErrorType
+from ..utils import Result, Ok, Err
 from .openai import OpenAIProvider
 
 class _DiscordAuthFlow:

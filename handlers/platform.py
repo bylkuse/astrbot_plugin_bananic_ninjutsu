@@ -4,6 +4,7 @@ import re
 import math
 import pathlib
 from typing import Any, List, Optional, Union, Set
+from urllib.parse import urlparse, parse_qs
 
 from astrbot.api import logger
 from astrbot.api.platform import At, Image, Reply, Plain, Node, Nodes
@@ -386,7 +387,6 @@ class PlatformAdapter:
         if not hasattr(self.bot, "call_action"): return None
 
         payloads = []
-        from urllib.parse import urlparse, parse_qs
 
         try:
             parsed = urlparse(file_param)

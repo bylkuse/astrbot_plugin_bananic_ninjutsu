@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
 from astrbot.api import logger
-from ..utils.storage import AtomicJsonStore
-from ..domain.quota import QuotaContext
+
+from ..utils import AtomicJsonStore
+from ..domain import QuotaContext
 
 class StatsService:
     def __init__(self, data_dir: Path, global_config: Dict[str, Any]):

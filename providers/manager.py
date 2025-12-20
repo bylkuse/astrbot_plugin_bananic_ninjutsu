@@ -6,9 +6,12 @@ from typing import List, Dict, Optional, Type
 import aiohttp
 from astrbot.api import logger
 
-from ..domain.model import ApiRequest, GenResult, PluginError, APIErrorType, ApiType, ConnectionPreset, GenerationConfig
-from ..utils.result import Result, Ok, Err
-from . import BaseProvider
+from ..domain import ApiRequest, GenResult, PluginError, APIErrorType, ApiType, ConnectionPreset, GenerationConfig
+from ..utils import Result, Ok, Err
+from .openai import OpenAIProvider
+from .google import GoogleProvider
+from .zai import ZaiProvider
+from .base import BaseProvider
 
 class ProviderManager:
     ERROR_CONFIG = {
@@ -45,16 +48,13 @@ class ProviderManager:
             if not provider.session.closed:
                 return provider
 
-        provider_cls: Optional[Type[BaseProvider]] = None
+        provider_cls = None
 
         if s_type == ApiType.OPENAI:
-            from .openai import OpenAIProvider
             provider_cls = OpenAIProvider
         elif s_type == ApiType.GOOGLE:
-            from .google import GoogleProvider
             provider_cls = GoogleProvider
         elif s_type == ApiType.ZAI:
-            from .zai import ZaiProvider
             provider_cls = ZaiProvider
         else:
             raise ValueError(f"不支持的 API 类型: {s_type}")

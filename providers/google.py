@@ -6,10 +6,10 @@ from typing import List, Any, Dict
 
 from astrbot.api import logger
 
-from ..domain.model import ApiRequest, GenResult, PluginError, APIErrorType
-from ..utils.result import Result, Ok, Err
-from ..utils.image import ImageUtils
-from . import BaseProvider
+from ..domain import ApiRequest, GenResult, PluginError, APIErrorType
+from ..utils import Result, Ok, Err, ImageUtils
+
+from .base import BaseProvider
 
 class GoogleProvider(BaseProvider):
     async def generate(self, request: ApiRequest) -> Result[GenResult, PluginError]:

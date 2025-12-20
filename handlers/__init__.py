@@ -5,5 +5,5 @@ from .workflow import WorkflowHandler
 __all__ = [
     "PlatformAdapter",
     "ManagementHandler",
-    "WorkflowHandler",
+    "WorkflowHandler"
 ]

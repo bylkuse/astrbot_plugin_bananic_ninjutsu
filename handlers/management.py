@@ -5,14 +5,12 @@ from astrbot.api import logger
 from astrbot.api.platform import At, AstrMessageEvent
 from astrbot.api.util import SessionController, session_waiter
 
-from ..domain.model import ConnectionPreset, ApiType
-from ..domain.prompt import PromptResolver
-from ..services.config import ConfigService, KVHelper
-from ..services.stats import StatsService
-from ..providers.manager import ProviderManager
-from ..utils.parser import CommandParser
+from ..domain import ConnectionPreset, ApiType, PromptResolver, ApiRequest, GenerationConfig, UserQuota
+from ..services import ConfigService, KVHelper, StatsService
+from ..providers import ProviderManager
+from ..utils import CommandParser
 from ..views import ResponsePresenter
-from .platform import PlatformAdapter
+from . import PlatformAdapter
 
 class ManagementHandler:
     def __init__(
@@ -358,7 +356,6 @@ class ManagementHandler:
         # 详情 & 可用模型
         waiting_msg_id = await adapter.send_text("🔍 正在连接服务器获取可用模型列表，请稍候...")
 
-        from ..domain.model import ApiRequest, GenerationConfig
         dummy_req = ApiRequest(
             api_key="",
             preset=preset,
@@ -545,7 +542,6 @@ class ManagementHandler:
 
         if is_admin and target_user_id:
             ctx = await self.stats.get_quota_context(target_user_id, None, False)
-            from ..domain.model import UserQuota
             uq = UserQuota(target_user_id, ctx.user_balance)
             msg = f"👤 用户 {target_user_id} 数据:\n"
             msg += f"💳 剩余额度: {uq.remaining} 次"
@@ -557,7 +553,6 @@ class ManagementHandler:
         dash_data = self.stats.get_dashboard_data()
 
         ctx = await self.stats.get_quota_context(user_id, adapter.group_id, is_admin)
-        from ..domain.model import UserQuota
         uq = UserQuota(user_id, ctx.user_balance)
 
         msg = ResponsePresenter.stats_dashboard(

@@ -1,11 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from .domain.prompt import VariableDefinition
-from .domain.model import (
-    PluginError, APIErrorType, 
-    GenResult, ApiRequest, 
-    ConnectionPreset, UserQuota
-)
+from .domain import VariableDefinition, PluginError, APIErrorType, GenResult, ApiRequest, ConnectionPreset, UserQuota
 
 class ResponsePresenter:
     _ERROR_MESSAGES = {

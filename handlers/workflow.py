@@ -1,23 +1,14 @@
+import random
 from typing import Optional, List, Any, Tuple
 
 from astrbot.api import logger
 from astrbot.api.star import Context
-from astrbot.api.platform import AstrMessageEvent, Image, Plain, At
-
-from ..domain.model import (
-    GenerationConfig, 
-    APIErrorType, 
-    PluginError
-)
-from ..services.generation import GenerationService
-from ..services.resource import ResourceService
-from ..services.config import ConfigService
-from ..services.stats import StatsService
-from ..utils.parser import CommandParser, ParsedCommand
-from ..utils.result import Result, Ok, Err
+from astrbot.api.platform import AstrMessageEvent, Image, Plain, At 
+from ..domain import PromptResolver, GenerationConfig, APIErrorType, PluginError, UserQuota, ApiRequest
+from ..services import GenerationService, ResourceService, ConfigService, StatsService
+from ..utils import CommandParser, ParsedCommand, Result, Ok, Err
 from ..views import ResponsePresenter
-from ..domain.prompt import PromptResolver
-from .platform import PlatformAdapter
+from . import PlatformAdapter
 
 class WorkflowHandler:
     def __init__(
@@ -227,7 +218,6 @@ class WorkflowHandler:
                 if adapter.group_id and hasattr(adapter.bot, "get_group_member_list"):
                     members = await adapter.bot.get_group_member_list(group_id=int(adapter.group_id))
                     if members:
-                        import random
                         lucky = random.choice(members)
                         random_name = lucky.get("card") or lucky.get("nickname") or str(lucky.get("user_id"))
                 ctx_map["run"] = random_name
@@ -318,7 +308,6 @@ class WorkflowHandler:
                 gen_res.enhancer_model = used_enhancer_model
                 gen_res.enhancer_instruction = used_enhancer_instr
             quota_ctx = await self.stats.get_quota_context(adapter.sender_id, adapter.group_id, is_admin)
-            from ..domain.model import UserQuota
             uq = UserQuota(adapter.sender_id, quota_ctx.user_balance)
 
             cost = 1
@@ -326,7 +315,6 @@ class WorkflowHandler:
             elif "2K" in gen_config.image_size.upper(): cost = 2
 
             current_preset = self.cfg.get_active_preset()
-            from ..domain.model import ApiRequest
             dummy_req = ApiRequest(api_key="", preset=current_preset, gen_config=gen_config)
 
             caption = ResponsePresenter.generation_success(

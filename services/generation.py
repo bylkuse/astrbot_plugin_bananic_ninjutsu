@@ -1,18 +1,10 @@
 import time
-from typing import List, Optional, Dict, Any, TYPE_CHECKING
+from typing import List, Optional, Dict, Any
 
-from ..domain.model import (
-    ApiRequest, GenResult, GenerationConfig, 
-    PluginError, APIErrorType
-)
-from ..domain.quota import QuotaTransaction
-from ..domain.prompt import PromptResolver
-from ..providers.manager import ProviderManager
-from ..utils.result import Result, Ok, Err
-
-if TYPE_CHECKING:
-    from .config import ConfigService
-    from .stats import StatsService 
+from ..domain import PromptResolver, ApiRequest, GenResult, GenerationConfig, PluginError, APIErrorType, QuotaTransaction
+from ..providers import ProviderManager
+from ..utils import Result, Ok, Err
+from . import ConfigService, StatsService
 
 class GenerationService:
     def __init__(

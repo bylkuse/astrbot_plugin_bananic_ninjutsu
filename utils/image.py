@@ -2,6 +2,7 @@ import io
 import base64
 from typing import Optional
 from PIL import Image as PILImage
+
 from astrbot.api import logger
 
 class ImageUtils:

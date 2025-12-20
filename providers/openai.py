@@ -5,10 +5,10 @@ import aiohttp
 from typing import Any, Dict, List, Optional
 
 from astrbot.api import logger
-from ..domain.model import ApiRequest, GenResult, PluginError, APIErrorType
-from ..utils.result import Result, Ok, Err
-from ..utils.image import ImageUtils
-from . import BaseProvider
+
+from ..domain import ApiRequest, GenResult, PluginError, APIErrorType
+from ..utils import Result, Ok, Err, ImageUtils
+from .base import BaseProvider
 
 class OpenAIProvider(BaseProvider):
     DEFAULT_STREAM_SETTING = False

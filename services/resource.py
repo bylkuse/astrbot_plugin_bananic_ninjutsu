@@ -2,13 +2,13 @@ import asyncio
 import hashlib
 import time
 import urllib.parse
+import aiohttp
 from pathlib import Path
 from typing import List, Optional, Any
 
-import aiohttp
 from astrbot.api import logger
 
-from ..utils.image import ImageUtils
+from ..utils import ImageUtils
 
 class ResourceService:
     def __init__(self, data_dir: Path, session: aiohttp.ClientSession):
