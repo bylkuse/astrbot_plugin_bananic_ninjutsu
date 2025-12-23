@@ -66,8 +66,7 @@ class GoogleProvider(BaseProvider):
         finish_reason = "success"
 
         try:
-            async for line in resp.content:
-                line = line.strip()
+            async for line in self._iter_sse_lines(resp):
                 if not line or not line.startswith(b"data:"):
                     continue
 

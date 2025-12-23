@@ -8,10 +8,7 @@ from astrbot.api import logger
 
 from ..domain import ApiRequest, GenResult, PluginError, APIErrorType, ApiType, ConnectionPreset, GenerationConfig
 from ..utils import Result, Ok, Err
-from .openai import OpenAIProvider
-from .google import GoogleProvider
-from .zai import ZaiProvider
-from .base import BaseProvider
+from . import OpenAIProvider, GoogleProvider, ZaiProvider, BaseProvider
 
 class ProviderManager:
     ERROR_CONFIG = {

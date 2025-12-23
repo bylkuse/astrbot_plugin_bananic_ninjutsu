@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, AsyncGenerator
 import asyncio
 import base64
 import json
@@ -22,6 +22,17 @@ class BaseProvider(ABC):
 
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
+
+    async def _iter_sse_lines(self, response: aiohttp.ClientResponse) -> AsyncGenerator[bytes, None]:
+        buffer = b""
+        async for chunk in response.content.iter_any():
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                yield line.strip()
+
+        if buffer:
+            yield buffer.strip()
 
     @abstractmethod
     async def generate(self, request: ApiRequest) -> Result[GenResult, PluginError]:

@@ -76,8 +76,7 @@ class OpenAIProvider(BaseProvider):
     async def _parse_sse_response(self, resp: aiohttp.ClientResponse) -> str:
         full_text_accumulator = []
 
-        async for line in resp.content:
-            line = line.strip()
+        async for line in self._iter_sse_lines(resp):
             if not line or not line.startswith(b'data: '):
                 continue
 
@@ -102,6 +101,7 @@ class OpenAIProvider(BaseProvider):
         return {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {request.api_key}",
+            "Accept-Encoding": "gzip, deflate",
         }
 
     async def _build_payload(self, request: ApiRequest) -> Dict[str, Any]:

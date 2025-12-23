@@ -20,11 +20,12 @@ class APIErrorType(Enum):
     UNKNOWN = "unknown"
 
 @dataclass
-class PluginError:
+class PluginError(Exception):
     error_type: APIErrorType
     message: str
     status_code: Optional[int] = None
     raw_data: Optional[Dict[str, Any]] = None
+    is_retryable: bool = False
 
     def __str__(self):
         return f"[{self.error_type.name}] {self.message}"

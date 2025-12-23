@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.4-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.5-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -344,8 +344,8 @@
 ## ❓ 常见问题
 
 ### 关于zAI
-多半是似了喵，一直在做封堵2api的维护，后面可能会考虑移除该适配器
-<br>zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（貌似3个小时有效期？），均通过F12获取
+403验证好难绕，多半是似了喵，一直在做封堵2api的维护，后面可能会考虑移除该适配器
+<br>zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（改成24小时有效期了），均通过F12获取
 <br>Discord Token在Discord登录后，携带 /api 请求的 Authorization 字段中找到
 <br>zAI Token只需要在 https://zai.is/ 中，找到存储的 token 字段
 
