@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.5-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.6-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -27,7 +27,8 @@
 * 自定义&扩展性<br>
 
 ⚠小心刷屏：√生成后撤回等待词 √定时撤回生成结果 √已内置合并转发 ~~建议配合AstrBot **长文本转发功能** 使用~~
-<br>0.3.1大重构已完成，接下来小修小补~
+<br>感谢还在默默支持我的朋友，偷偷把zai适配器修好了（请看常见问题），低调享受就好了
+<br>最近一直在写新插件，想法比精力多太多了
 
 ## 🖼️ 功能预览
 **不想看长篇大论？几张图带你速览插件特色**
@@ -344,10 +345,23 @@
 ## ❓ 常见问题
 
 ### 关于zAI
-403验证好难绕，多半是似了喵，一直在做封堵2api的维护，后面可能会考虑移除该适配器
-<br>zAI类型的连接配置的key兼容Discord Token（较长有效期，会自动进行zAI Token的交换&更新）或zAI Token（改成24小时有效期了），均通过F12获取
-<br>Discord Token在Discord登录后，携带 /api 请求的 Authorization 字段中找到
-<br>zAI Token只需要在 https://zai.is/ 中，找到存储的 token 字段
+感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来。
+<br>必须步骤：
+<br>1.找一处含 playwright 依赖的环境（即完成过 pip install playwright 和 playwright install 的环境，可以复用astrbot的环境或者uv建一个）
+<br>2.找到.../data/plugins/astrbot_plugin_bananic_ninjutsu/providers/zai_creds.py
+<br>3.在环境中运行 zai_creds.py （它是独立于插件的，因此你可以依情况把它移动到合适的地方运行），按提示操作导出 zai_creds.json
+
+<br>zAI凭据配置方案一（兼容）：
+<br>现在zAI类型的连接配置的 key 不再是 Discord Token ，而是 zai_creds.json 中的字符串内容（注意需要使用反斜杠进行完整的转义！因此推荐方案二！）
+
+<br>zAI凭据配置方案二（推荐）：
+<br>zAI类型的连接配置的 key 随便填个 default 之类的，插件识别到这不是合法密钥就会自动去寻找凭证文件
+<br>直接把生成的 zai_creds.json 放到以下两个路径之一，插件会自动加载（优先级排序）
+
+```
+.../data/plugin_data/astrbot_plugin_bananic_ninjutsu/
+.../data/plugins/astrbot_plugin_bananic_ninjutsu/providers/
+```
 
 ## 🤝 友情鸣谢
 
@@ -382,7 +396,8 @@ astrbot_plugin_bananic_ninjutsu/
 │   └── quota.py                  # 使用权限
 │
 ├── providers/                # [通信层] API 适配
-│   ├── __init__.py               # API 基类
+│   ├── __init__.py
+│   ├── base.py                   # API 基类
 │   ├── manager.py                # 密钥 & Client 管理
 │   ├── openai.py                 # openai
 │   ├── zai.py                    # zai（合并discord token换取逻辑，RIP？）

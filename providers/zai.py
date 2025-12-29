@@ -1,284 +1,480 @@
 import json
 import base64
 import time
-import re
-import asyncio
-import aiohttp
-from typing import Dict, Any, Optional, List
-from urllib.parse import urlparse, parse_qs
-from dataclasses import replace
+import secrets
+import uuid
+from pathlib import Path
+from typing import Dict, Optional, Tuple, List
+
 try:
     from curl_cffi.requests import AsyncSession
 except ImportError:
-    raise ImportError("请安装 curl_cffi 以通过 Discord 验证: pip install curl_cffi")
+    raise ImportError("请安装 curl_cffi: pip install curl_cffi")
+
+try:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+    from cryptography.hazmat.backends import default_backend
+except ImportError:
+    raise ImportError("请安装加密库: pip install cryptography")
 
 from astrbot.api import logger
-
 from ..domain import ApiRequest, GenResult, PluginError, APIErrorType
-from ..utils import Result, Ok, Err
+from ..utils import Result, Ok, Err, ImageUtils
 from .openai import OpenAIProvider
 
-class _DiscordAuthFlow:
-    """基于Futureppo大佬的实现，请感谢他"""
-    DISCORD_API_BASE = "https://discord.com/api/v9"
-    ZAI_BASE_URL = "https://zai.is"
 
-    def __init__(self, proxy: Optional[str] = None):
-        self.proxy = proxy
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Referer': f'{self.ZAI_BASE_URL}/auth',
-            'Origin': self.ZAI_BASE_URL,
+class DarkKnightSigner:
+    """感谢来自WangYiHeng-47/zai.is-的实现"""
+    def __init__(self, jwk_data: Dict, fingerprint: Dict):
+        self.jwk = jwk_data
+        self.fingerprint = fingerprint
+        try:
+            self.private_key = self._load_private_key(jwk_data)
+        except Exception as e:
+            raise ValueError(f"私钥还原失败: {e}")
+
+    def _pad_base64(self, b64_str):
+        return b64_str + '=' * (-len(b64_str) % 4)
+
+    def _load_private_key(self, jwk):
+        # 从 JWK 参数还原 EC 私钥
+        d_int = int.from_bytes(base64.urlsafe_b64decode(self._pad_base64(jwk['d'])), 'big')
+        x_int = int.from_bytes(base64.urlsafe_b64decode(self._pad_base64(jwk['x'])), 'big')
+        y_int = int.from_bytes(base64.urlsafe_b64decode(self._pad_base64(jwk['y'])), 'big')
+
+        public_numbers = ec.EllipticCurvePublicNumbers(x_int, y_int, ec.SECP256R1())
+        return ec.EllipticCurvePrivateNumbers(d_int, public_numbers).private_key(default_backend())
+
+    def generate_header(self) -> str:
+        nonce = secrets.token_hex(32)
+        ts = int(time.time() * 1000)
+
+        # 构造 Payload
+        base_payload = {
+            "fp": self.fingerprint,
+            "nonce": nonce,
+            "pk": {
+                "crv": self.jwk.get("crv", "P-256"),
+                "kty": self.jwk.get("kty", "EC"),
+                "x": self.jwk["x"],
+                "y": self.jwk["y"]
+            },
+            "ts": ts,
+            "v": 1
         }
 
-    async def login(self, discord_token: str) -> str:
-        # [Mod] 使用 curl_cffi 的 AsyncSession，并指定 impersonate="chrome120"
-        # 这会让 TLS 指纹看起来像真正的 Chrome 浏览器
-        async with AsyncSession(impersonate="chrome120", headers=self.headers) as session:
-            # curl_cffi 自动管理 cookie，无需显式声明 CookieJar
-            oauth_info = await self._get_authorize_url(session)
-            callback_url = await self._authorize_app(session, discord_token, oauth_info)
-            return await self._handle_callback(session, callback_url)
+        # 序列化 + 签名
+        canonical_json = json.dumps(base_payload, separators=(',', ':'), sort_keys=True)
+        der_signature = self.private_key.sign(
+            canonical_json.encode('utf-8'),
+            ec.ECDSA(hashes.SHA256())
+        )
 
-    async def _get_authorize_url(self, session: AsyncSession) -> Dict[str, str]:
-        url = f"{self.ZAI_BASE_URL}/oauth/discord/login"
-        # [Mod] curl_cffi 参数略有不同，ssl=False 不需要，timeout 是 int
-        resp = await session.get(url, allow_redirects=False, proxy=self.proxy, timeout=30)
-        
-        location = resp.headers.get('Location', '')
-        if 'discord.com' in location:
-            parsed = urlparse(location)
-            qs = parse_qs(parsed.query)
-            return {
-                'client_id': qs.get('client_id', [''])[0],
-                'redirect_uri': qs.get('redirect_uri', [''])[0],
-                'scope': qs.get('scope', ['identify email'])[0],
-                'state': qs.get('state', [''])[0]
-            }
-        raise PluginError(APIErrorType.AUTH_FAILED, f"无法获取授权 URL, status: {resp.status_code}")
+        # DER 转 R|S
+        r, s = utils.decode_dss_signature(der_signature)
+        raw_signature = r.to_bytes(32, 'big') + s.to_bytes(32, 'big')
+        sig_b64 = base64.urlsafe_b64encode(raw_signature).decode().rstrip('=')
 
-    async def _authorize_app(self, session: AsyncSession, token: str, info: Dict[str, str]) -> str:
-        url = f"{self.DISCORD_API_BASE}/oauth2/authorize"
-        
-        REAL_CLIENT_BUILD_NUMBER = 482285
-        super_props_dict = {
-            "os": "Windows",
-            "browser": "Chrome",
-            "device": "",
-            "system_locale": "zh-CN",
-            "browser_user_agent": self.headers['User-Agent'],
-            "browser_version": "120.0.0.0",
-            "os_version": "10",
-            "referrer": "",
-            "referring_domain": "",
-            "referrer_current": "",
-            "referring_domain_current": "",
-            "release_channel": "stable",
-            "client_build_number": REAL_CLIENT_BUILD_NUMBER,
-            "client_event_source": None
-        }
-        super_props = base64.b64encode(json.dumps(super_props_dict).encode()).decode()
+        final_payload = base_payload.copy()
+        final_payload["sig"] = sig_b64
 
-        headers = self.headers.copy()
-        headers.update({
-            'Authorization': token,
-            'Content-Type': 'application/json',
-            'X-Super-Properties': super_props,
-            'User-Agent': self.headers['User-Agent']
-        })
-
-        payload = {'permissions': '0', 'authorize': True, 'integration_type': 0}
-        params = {
-            'client_id': info['client_id'],
-            'response_type': 'code',
-            'redirect_uri': info['redirect_uri'],
-            'scope': info['scope']
-        }
-        if info['state']: params['state'] = info['state']
-
-        # [Mod] json参数在 curl_cffi 中也是 json
-        resp = await session.post(url, headers=headers, params=params, json=payload, proxy=self.proxy, timeout=30)
-        
-        if resp.status_code == 200:
-            data = resp.json() # curl_cffi 是方法不是协程
-            loc = data.get('location', '')
-            if loc.startswith('/'): loc = f"{self.ZAI_BASE_URL}{loc}"
-            return loc
-
-        text = resp.text
-        if "captcha" in text or "turnstile" in text:
-            raise PluginError(APIErrorType.AUTH_FAILED, "Discord 触发了验证码，请更换 IP 或稍后重试")
-             
-        raise PluginError(APIErrorType.AUTH_FAILED, f"Discord 授权失败: {resp.status_code} {text[:100]}")
-
-    async def _handle_callback(self, session: AsyncSession, url: str) -> str:
-        current_url = url
-        for _ in range(5):
-            if m := re.search(r'[#?&]token=([^&\s]+)', current_url):
-                return m.group(1)
-
-            resp = await session.get(current_url, allow_redirects=False, proxy=self.proxy, timeout=30)
-            
-            # curl_cffi cookie 获取方式
-            for name, value in session.cookies.items():
-                if name == 'token': return value
-
-            location = resp.headers.get('Location')
-            if not location: break
-
-            if location.startswith('/'): location = f"{self.ZAI_BASE_URL}{location}"
-            current_url = location
-
-        raise PluginError(APIErrorType.AUTH_FAILED, "未能在回调中获取 Token")
+        # 最终编码 x-zai-darkknight
+        return base64.urlsafe_b64encode(
+            json.dumps(final_payload, separators=(',', ':'), sort_keys=True).encode()
+        ).decode().rstrip('=')
 
 
 class ZaiProvider(OpenAIProvider):
-    DEFAULT_STREAM_SETTING = True
+    """基于DarkKnightSigner构造的简易2api，并补上了图生图接口"""
+    # API 接口
+    ZAI_NEW_CHAT_URL = "https://zai.is/api/v1/chats/new"
+    ZAI_COMPLETION_URL = "https://zai.is/api/chat/completions"
+    ZAI_UPLOAD_URL = "https://zai.is/api/v1/files/"
 
-    _token_cache: Dict[str, Dict[str, Any]] = {}
-    _cache_lock = asyncio.Lock()
-    CACHE_DURATION = 3600 * 2.8
-    
-    ZAI_API_ENDPOINT = "https://zai.is/api/chat/completions"
+    PLUGIN_DIR_NAME = "astrbot_plugin_bananic_ninjutsu"
+    CREDS_FILENAME = "zai_creds.json"
 
-    async def _get_zai_token(self, discord_token: str, proxy: Optional[str]) -> str:
-        async with self._cache_lock:
-            now = time.time()
-            cache = self._token_cache.get(discord_token)
+    def __init__(self, session):
+        super().__init__(session)
+        self._cached_signer: Optional[DarkKnightSigner] = None
+        self._cached_token: Optional[str] = None
+        self._last_creds_hash: str = ""
 
-            if cache and now < cache['expire']:
-                return cache['token']
+    def _load_credentials(self, request_api_key: str) -> Tuple[DarkKnightSigner, str]:
+        creds_data = None
+        source = "Unknown"
 
-            logger.info(f"[ZaiProvider] 正在通过 Discord 登录获取新 Token... (Key: ...{discord_token[-6:]})")
-
-            auth = _DiscordAuthFlow(proxy)
+        # 1. 连接配置 (转义过的JSON 字符串)
+        if request_api_key and request_api_key.strip().startswith("{") and '"private_key"' in request_api_key:
             try:
-                zai_token = await auth.login(discord_token)
-            except Exception as e:
-                if isinstance(e, PluginError): raise e
-                raise PluginError(APIErrorType.AUTH_FAILED, f"Zai 登录失败: {e}")
+                creds_data = json.loads(request_api_key)
+                source = "Config (Direct JSON)"
+            except json.JSONDecodeError:
+                pass
 
-            self._token_cache[discord_token] = {
-                'token': zai_token,
-                'expire': now + self.CACHE_DURATION
-            }
-            return zai_token
+        # 2. 凭证文件 (推荐)
+        if not creds_data:
+            current_file = Path(__file__).resolve()
+            paths_to_try = []
 
-    def _invalidate_cache(self, discord_token: str):
-        if discord_token in self._token_cache:
-            del self._token_cache[discord_token]
-            logger.info(f"[ZaiProvider] 已清除失效 Token 缓存 (Key: ...{discord_token[-6:]})")
+            # 标准数据目录
+            try:
+                data_root = current_file.parents[3] 
+                path_std = data_root / "plugin_data" / self.PLUGIN_DIR_NAME / self.CREDS_FILENAME
+                paths_to_try.append(path_std)
+            except IndexError:
+                pass
 
-    # === 钩子方法 ===
+            # 同级目录 (Fallback)
+            path_local = current_file.parent / self.CREDS_FILENAME
+            paths_to_try.append(path_local)
 
-    async def _get_headers(self, request: ApiRequest) -> Dict[str, str]:
-        discord_token = request.api_key
-        zai_token = await self._get_zai_token(discord_token, request.proxy_url)
+            # 遍历寻找
+            for p in paths_to_try:
+                if p.exists():
+                    try:
+                        content = p.read_text(encoding="utf-8")
+                        creds_data = json.loads(content)
+                        source = f"File ({p})"
+                        break
+                    except Exception as e:
+                        logger.warning(f"[Zai] 尝试读取凭证 {p} 失败: {e}")
 
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {zai_token}",
-            "Accept-Encoding": "gzip, deflate",
-        }
+        # 3. 最终校验
+        if not creds_data:
+            tried_str = "\n".join([str(p) for p in paths_to_try]) if 'paths_to_try' in locals() else "None"
+            raise PluginError(
+                APIErrorType.AUTH_FAILED, 
+                f"未找到有效的 Zai 凭证文件，请在playwright环境下使用zai_creds.py生成zai_creds.json。\n已尝试路径:\n{tried_str}"
+            )
 
-    async def _build_payload(self, request: ApiRequest) -> Dict[str, Any]:
-        payload = await super()._build_payload(request)
+        # 4. 缓存校验
+        current_hash = str(hash(json.dumps(creds_data, sort_keys=True)))
+        if self._cached_signer and self._last_creds_hash == current_hash:
+            return self._cached_signer, self._cached_token
 
-        payload["stream"] = False
-
-        params = {}
-        if request.gen_config.aspect_ratio != "default":
-            params["image_aspect_ratio"] = request.gen_config.aspect_ratio
-        if request.gen_config.image_size != "1K":
-            params["image_resolution"] = request.gen_config.image_size
-
-        if params:
-            payload["params"] = params
-
-        return payload
+        try:
+            signer = DarkKnightSigner(creds_data["private_key"], creds_data["fingerprint"])
+            token = creds_data["token"]
+            self._cached_signer = signer
+            self._cached_token = token
+            self._last_creds_hash = current_hash
+            logger.info(f"[Zai] 成功加载凭证。来源: {source}")
+            return signer, token
+        except Exception as e:
+            raise PluginError(APIErrorType.AUTH_FAILED, f"凭证初始化失败: {e}")
 
     async def generate(self, request: ApiRequest) -> Result[GenResult, PluginError]:
-        # 1. 准备数据
         try:
-            headers = await self._get_headers(request)
-            payload = await self._build_payload(request)
-        except Exception as e:
-            return Err(PluginError(APIErrorType.AUTH_FAILED, f"准备请求数据失败: {e}"))
+            signer, token = self._load_credentials(request.api_key)
+            async with AsyncSession(impersonate="chrome120") as session:
+                # 1. 上传
+                files_list = []
+                if request.image_bytes_list:
+                    for img_bytes in request.image_bytes_list:
+                        file_url = await self._upload_image(session, signer, token, img_bytes, request.proxy_url)
+                        files_list.append({
+                            "type": "image",
+                            "url": file_url
+                        })
 
-        # Zai 强制不流式，payload在 _build_payload 中已被设置为 stream=False
-        
-        # 2. 发起请求 (使用 curl_cffi 绕过 TLS 检测)
-        response_content = None
-        try:
-            # impersonate="chrome120" 是绕过检测的关键
-            async with AsyncSession(impersonate="chrome120", headers=headers) as session:
-                resp = await session.post(
-                    self.ZAI_API_ENDPOINT, 
-                    json=payload, 
-                    proxy=request.proxy_url, 
-                    timeout=request.gen_config.timeout
+                # 2. 握手
+                chat_id = await self._handshake(
+                    session, signer, token, request, 
+                    prompt=request.gen_config.prompt, 
+                    files=files_list
                 )
-                
-                if resp.status_code != 200:
-                    text = resp.text
-                    # 尝试解析错误信息
-                    try:
-                        err_json = json.loads(text)
-                        msg = err_json.get("detail", text)
-                        # 如果是 validation_failed，通常意味着指纹不对
-                        if "validation_failed" in str(text):
-                            msg += " (指纹验证失败，可能是 curl_cffi 版本过低或 IP 脏了)"
-                    except:
-                        msg = text[:200]
-                        
-                    # 403 可能是 Auth 失败，也可能是风控
-                    err_type = APIErrorType.AUTH_FAILED if resp.status_code in [401, 403] else APIErrorType.SERVER_ERROR
-                    raise PluginError(err_type, f"HTTP {resp.status_code}: {msg}", resp.status_code)
 
-                response_content = resp.json()
-
+                # 3. 生成
+                return await self._chat(
+                    session, signer, token, chat_id, request, 
+                    files_list=files_list
+                )
         except Exception as e:
-            # 异常处理
-            if isinstance(e, PluginError):
-                # 如果是 Auth 失败，尝试清除缓存
-                if e.error_type == APIErrorType.AUTH_FAILED:
-                    self._invalidate_cache(request.api_key)
-                return Err(e)
-            return Err(PluginError(APIErrorType.SERVER_ERROR, f"Zai 请求异常: {e}"))
+            error, _ = self.convert_exception(e)
+            return Err(error)
 
-        # 3. 提取图片
-        # 使用父类 OpenAIProvider 的提取逻辑
-        image_url = self._extract_image_url(response_content)
+    async def _handshake(self, session: AsyncSession, signer: DarkKnightSigner, token: str, request: ApiRequest, prompt: str, files: List[Dict]) -> str:
+        msg_id = str(uuid.uuid4())
+        model = request.preset.model
+        ts_ms = int(time.time() * 1000)
+        ts_s = int(time.time())
 
+        # 构造消息内容
+        message_content = {
+            "id": msg_id,
+            "parentId": None,
+            "childrenIds": [],
+            "role": "user",
+            "content": prompt,
+            "timestamp": ts_s,
+            "models": [model]
+        }
+
+        if files:
+            message_content["files"] = files
+
+        # 构造完整 Payload
+        payload = {
+            "chat": {
+                "id": "", 
+                "title": "New Chat", 
+                "models": [model], 
+                "params": {},
+                "history": { 
+                    "messages": { msg_id: message_content }, 
+                    "currentId": msg_id 
+                },
+                "messages": [message_content],
+                "tags": [], 
+                "timestamp": ts_ms
+            }, 
+            "folder_id": None
+        }
+
+        # 探针：查看握手 Payload
+        logger.debug(f"[Zai Probe] Handshake Payload Files: {files}")
+        # logger.debug(f"[Zai Probe] Full Payload: {json.dumps(payload, ensure_ascii=False)}")
+
+        headers = {
+            "Authorization": token,
+            "x-zai-darkknight": signer.generate_header(),
+            "x-zai-fp": json.dumps(signer.fingerprint),
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Origin": "https://zai.is",
+            "Referer": "https://zai.is/"
+        }
+
+        resp = await session.post(self.ZAI_NEW_CHAT_URL, json=payload, headers=headers, proxy=request.proxy_url, timeout=15)
+
+        if resp.status_code != 200:
+            logger.error(f"[Zai Probe] Handshake Error: {resp.text}")
+            raise PluginError(APIErrorType.SERVER_ERROR, f"Zai 建房失败 ({resp.status_code})")
+
+        return resp.json().get("id")
+
+    async def _upload_image(self, session: AsyncSession, signer: DarkKnightSigner, token: str, image_bytes: bytes, proxy: str = None) -> str:
+        # 1. 准备基础信息
+        mime_type = ImageUtils.get_mime_type(image_bytes) or "image/png"
+        ext = mime_type.split("/")[-1]
+        filename = f"pasted-image-{int(time.time())}.{ext}"
+
+        boundary_str = f"WebKitFormBoundary{secrets.token_hex(16)}"
+        boundary = f"----{boundary_str}"
+
+        # 2. 构造 Metadata
+        meta_json = json.dumps({
+            "public_access": True,
+            "source": "base64_conversion"
+        }, separators=(',', ':'))
+
+        part_metadata = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="metadata"\r\n\r\n'
+            f'{meta_json}\r\n'
+        ).encode('utf-8')
+
+        # 3. 构造 File
+        part_file_head = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+        ).encode('utf-8')
+
+        part_file_tail = b"\r\n"
+
+        # 4. 结束符
+        part_closing = (
+            f"--{boundary}--\r\n"
+        ).encode('utf-8')
+
+        # 拼装
+        data_body = part_metadata + part_file_head + image_bytes + part_file_tail + part_closing
+
+        headers = {
+            "Authorization": token,
+            "x-zai-darkknight": signer.generate_header(),
+            "x-zai-fp": json.dumps(signer.fingerprint),
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(data_body)),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Origin": "https://zai.is",
+            "Referer": "https://zai.is/"
+        }
+
+        logger.debug(f"[Zai Probe] 上传中(修正字段名为metadata)... Size: {len(data_body)}")
+
+        resp = await session.post(
+            self.ZAI_UPLOAD_URL, 
+            headers=headers, 
+            data=data_body, 
+            proxy=proxy, 
+            timeout=60
+        )
+
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                file_id = data.get("id")
+                meta_data = data.get("meta", {}).get("data", {})
+                logger.debug(f"[Zai Probe] 上传成功. Meta Data: {meta_data}")
+
+                if not file_id:
+                    raise ValueError("响应缺失ID")
+                    
+                return f"/api/v1/files/{file_id}/content/public"
+            except Exception as e:
+                logger.error(f"[Zai] 解析失败: {e} Resp: {resp.text[:200]}")
+                raise PluginError(APIErrorType.SERVER_ERROR, "Zai 图片上传解析失败")
+        else:
+            logger.error(f"[Zai] 上传失败 {resp.status_code}: {resp.text}")
+            raise PluginError(APIErrorType.SERVER_ERROR, f"Zai 图片上传失败 ({resp.status_code})")
+
+    async def _chat(self, session: AsyncSession, signer: DarkKnightSigner, token: str, chat_id: str, request: ApiRequest, files_list: List[Dict]) -> Result[GenResult, PluginError]:
+        # 1. 构造消息体
+        message_content_parts = []
+
+        # 文本提示词
+        if request.gen_config.prompt:
+            message_content_parts.append({
+                "type": "text",
+                "text": request.gen_config.prompt
+            })
+
+        # 图片引用
+        if files_list:
+            for file_info in files_list:
+                message_content_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": file_info.get("url")
+                    }
+                })
+
+        # 2. 构造 messages 列表
+        messages = [{
+            "role": "user",
+            "content": message_content_parts,
+            # 单次调用不需要，实现多轮交互可能需要从 History 中提取
+            # "parentId": None,
+            # "childrenIds": [],
+            # "timestamp": int(time.time()),
+            # "models": [request.preset.model]
+        }]
+
+        # 3. 构造 Payload
+        payload = {
+            "chat_id": chat_id,
+            "model": request.preset.model,
+            "messages": messages, # 包含图文混合内容
+            "stream": True,
+            "params": {}
+        }
+
+        # 探针：打印 Chat 完整载荷
+        logger.debug("="*20 + " ZAI CHAT PAYLOAD " + "="*20)
+        logger.debug(json.dumps(payload, ensure_ascii=False, indent=2))
+        logger.debug("="*60)
+
+        headers = {
+            "Authorization": token,
+            "x-zai-darkknight": signer.generate_header(),
+            "x-zai-fp": json.dumps(signer.fingerprint),
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Origin": "https://zai.is"
+        }
+
+        resp = await session.post(
+            self.ZAI_COMPLETION_URL, 
+            json=payload, 
+            headers=headers, 
+            proxy=request.proxy_url, 
+            stream=True, 
+            timeout=120
+        )
+
+        if resp.status_code != 200:
+            logger.error(f"[Zai Chat Error] Status: {resp.status_code}\nBody: {resp.text}")
+            raise PluginError(APIErrorType.SERVER_ERROR, f"Zai 生成失败 ({resp.status_code})")
+
+        full_content = ""
+        buffer = ""
+
+        async for chunk in resp.aiter_content():
+            if not chunk: continue
+            chunk_str = chunk.decode('utf-8', errors='ignore')
+            buffer += chunk_str
+
+            while True:
+                start_index = buffer.find("data: ")
+                if start_index == -1:
+                    if len(buffer) > 100: buffer = buffer[-20:]
+                    break
+
+                next_start_index = buffer.find("data: ", start_index + 6)
+                json_str = None
+
+                if next_start_index != -1:
+                    segment = buffer[start_index:next_start_index]
+                    buffer = buffer[next_start_index:] 
+                    json_str = segment[6:].strip() 
+                else:
+                    if "[DONE]" in buffer[start_index:]:
+                        json_str = "[DONE]"
+                        buffer = "" 
+                    elif buffer.strip().endswith("}"): 
+                        temp_segment = buffer[start_index:]
+                        try:
+                            check_json = temp_segment[6:].strip()
+                            json.loads(check_json)
+                            json_str = check_json
+                            buffer = "" 
+                        except:
+                            break
+                    else:
+                        break
+
+                if not json_str: 
+                    continue
+
+                if json_str == "[DONE]":
+                    break
+
+                try:
+                    data = json.loads(json_str)
+                    choices = data.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content_piece = delta.get("content", "")
+                        if content_piece:
+                            full_content += content_piece
+                except json.JSONDecodeError:
+                    pass
+                except Exception as e:
+                    pass
+
+        image_url = self._extract_image_url(full_content)
         if not image_url:
-            return Err(PluginError(
-                APIErrorType.SERVER_ERROR, 
-                f"API返回数据结构异常，无法提取图片。预览: {str(response_content)[:200]}"
-            ))
+            logger.error("="*20 + " ZAI DEBUG PROBE " + "="*20)
+            logger.error(f"[Parse Result] Length: {len(full_content)}")
+            logger.error(f"[Parse Content] {full_content}")
+            logger.error("="*57)
 
-        # 4. 下载图片
-        # 图片 CDN 通常不校验 TLS 指纹，使用父类的 aiohttp 下载即可
-        # 如果下载也报 403，则需要把下载也改成 curl_cffi
-        try:
-            image_bytes = await self._download_or_decode(image_url, request.proxy_url)
-            
-            return Ok(GenResult(
-                images=[image_bytes],
-                model_name=request.preset.model,
-                finish_reason="success",
-                raw_response=response_content
-            ))
-        except Exception as e:
-            return Err(PluginError(APIErrorType.SERVER_ERROR, f"图片下载失败: {e}"))
+            if len(full_content) > 5:
+                return Err(PluginError(APIErrorType.SERVER_ERROR, f"未检测到图片链接，Zai 回复: {full_content[:100]}..."))
+            return Err(PluginError(APIErrorType.SERVER_ERROR, "Zai 响应为空"))
 
-    async def get_models(self, request: ApiRequest) -> List[str]:
-        discord_token = request.api_key
-        try:
-            zai_token = await self._get_zai_token(discord_token, request.proxy_url)
-        except Exception as e:
-            logger.warning(f"[ZaiProvider] 获取模型列表时登录失败: {e}")
-            return []
+        image_bytes = await self._download_or_decode(image_url, request.proxy_url)
 
-        temp_request = replace(request, api_key=zai_token)
-        return await super().get_models(temp_request)
+        return Ok(GenResult(
+            images=[image_bytes],
+            model_name=request.preset.model,
+            finish_reason="success"
+        ))
+
+    async def get_models(self, request: ApiRequest) -> list[str]:
+        # 逆向接口都不知道能活多久，懒得维护获取模型列表，感兴趣的可以自己去抓
+        return ["gemini-3-pro-image-preview"]
