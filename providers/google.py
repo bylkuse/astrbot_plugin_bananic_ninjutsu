@@ -146,7 +146,7 @@ class GoogleProvider(BaseProvider):
                 if b64_data:
                     images_list.append(base64.b64decode(b64_data))
             if "thought" in part:
-                 text_list.append(f"[Thinking] {part['thought']}")
+                text_list.append(f"[Thinking] {part['thought']}")
 
         if not text_list and not images_list:
              return Err(PluginError(APIErrorType.UNKNOWN, "未收到有效内容"))
@@ -185,7 +185,7 @@ class GoogleProvider(BaseProvider):
             image_config["aspectRatio"] = request.gen_config.aspect_ratio
 
         model_lower = model_name.lower()
-        should_send_size = any(k in model_lower for k in ["pro-image", "pro image", "banana-pro", "banana pro"])
+        should_send_size = "pro" in model_lower and ("image" in model_lower or "banana" in model_lower)
 
         if should_send_size and request.gen_config.image_size != "1K":
             image_config["imageSize"] = request.gen_config.image_size

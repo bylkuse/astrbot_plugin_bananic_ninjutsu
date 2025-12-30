@@ -165,6 +165,23 @@ class ZaiProvider(OpenAIProvider):
         except Exception as e:
             raise PluginError(APIErrorType.AUTH_FAILED, f"凭证初始化失败: {e}")
 
+    def _map_image_size(self, size_str: str) -> str:
+        s = size_str.upper()
+        if "4K" in s or "4k" in s: return "4K"
+        if "2K" in s or "2k" in s: return "2K"
+        return "1K"
+
+    def _map_aspect_ratio(self, ar_str: str) -> str:
+        if not ar_str or ar_str == "default":
+            return "dynamic" # Zai 的默认值
+
+        valid_ratios = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "dynamic"]
+
+        if ar_str in valid_ratios:
+            return ar_str
+
+        return "dynamic"
+
     async def generate(self, request: ApiRequest) -> Result[GenResult, PluginError]:
         try:
             signer, token = self._load_credentials(request.api_key)
@@ -364,13 +381,18 @@ class ZaiProvider(OpenAIProvider):
             # "models": [request.preset.model]
         }]
 
+        target_size = self._map_image_size(request.gen_config.image_size)
+        target_ar = self._map_aspect_ratio(request.gen_config.aspect_ratio)
+
         # 3. 构造 Payload
         payload = {
             "chat_id": chat_id,
             "model": request.preset.model,
             "messages": messages, # 包含图文混合内容
             "stream": True,
-            "params": {}
+            "params": {},
+            "image_size": target_size,
+            "aspect_ratio": target_ar
         }
 
         # 探针：打印 Chat 完整载荷
