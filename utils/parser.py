@@ -16,6 +16,8 @@ class CommandParser:
         "gs": "enable_search",
         "t": "enable_thinking",
         "th": "enable_thinking",
+        "g": "enable_gif",
+        "gif": "enable_gif",
         "ar": "aspect_ratio",
         "r": "image_size",
         "size": "image_size",
@@ -35,7 +37,7 @@ class CommandParser:
 
     # 布尔开关 (无值为 True)
     BOOLEAN_KEYS = {
-        "enable_search", "enable_thinking"
+        "enable_search", "enable_thinking", "enable_gif"
     }
 
     @classmethod

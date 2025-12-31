@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.7-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.3.8-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -345,7 +345,7 @@
 ## ❓ 常见问题
 
 ### 关于zAI
-感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来。
+感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来。0.3.8更新-gif模式也支持了（使用参数--g）
 <br>必须步骤：
 <br>1.找一处含 playwright 依赖的环境（即完成过 pip install playwright 和 playwright install 的环境，可以复用astrbot的环境或者uv建一个）
 <br>2.找到.../data/plugins/astrbot_plugin_bananic_ninjutsu/providers/zai_creds.py

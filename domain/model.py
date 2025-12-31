@@ -44,14 +44,15 @@ class ConnectionPreset:
 class GenerationConfig:
     prompt: str
     negative_prompt: Optional[str] = None
-    image_size: str = "1K"             # --r
-    aspect_ratio: str = "default"      # --ar
+    image_size: str = "1K"                    # --r
+    aspect_ratio: str = "default"             # --ar
     steps: int = 20
-    timeout: int = 300                 # --to
-    enable_search: bool = False        # --s
-    enable_thinking: bool = False      # --t
+    timeout: int = 300                        # --to
+    enable_search: bool = False               # --s
+    enable_thinking: bool = False             # --t
+    enable_gif: bool = False                  # --g
     upscale_instruction: Optional[str] = None # --up
-    sender_id: Optional[str] = None    # --q
+    sender_id: Optional[str] = None           # --q
     target_user_id: Optional[str] = None 
 
     def to_dict(self) -> Dict[str, Any]:

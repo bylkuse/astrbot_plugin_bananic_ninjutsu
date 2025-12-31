@@ -409,6 +409,7 @@ class WorkflowHandler:
             timeout=int(p.get("timeout", 300)),
             enable_search=bool(p.get("enable_search", False)),
             enable_thinking=bool(p.get("enable_thinking", False)),
+            enable_gif=bool(p.get("enable_gif", False)),
             upscale_instruction=p.get("upscale_instruction"), 
             target_user_id=p.get("target_user_id"),
             sender_id=None
