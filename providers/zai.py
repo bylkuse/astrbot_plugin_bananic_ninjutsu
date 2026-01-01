@@ -196,7 +196,7 @@ class ZaiProvider(OpenAIProvider):
             error, _ = self.convert_exception(e)
             return Err(error)
 
-    async def _handshake(self, session: AsyncSession, signer: DarkKnightSigner, token: str, request: ApiRequest, prompt: str, files: List[Dict]) -> str:
+    async def _handshake(self, session: AsyncSession, signer: DarkKnightSigner, token: str, request: ApiRequest, prompt: str, files: List[Dict]) -> Tuple[str, str]:
         msg_id = str(uuid.uuid4())
         model = request.preset.model
         ts_ms = int(time.time() * 1000)
@@ -321,44 +321,55 @@ class ZaiProvider(OpenAIProvider):
 
         target_size = self._map_image_size(request.gen_config.image_size)
         target_ar = self._map_aspect_ratio(request.gen_config.aspect_ratio)
-        request_uuid = str(uuid.uuid4())
 
-        session_id = secrets.token_urlsafe(16) 
-
-        payload = {
-            "id": request_uuid,  
-            "background_tasks": {
-                "title_generation": True, 
-                "tags_generation": True, 
-                "follow_up_generation": True
-            },
-
-            "features": {
-                "voice": False,
-                "image_generation": False, 
-                "code_interpreter": False,
-                "web_search": False
-            },
-            "chat_id": chat_id,
-            "model": request.preset.model,
-            "messages": messages,
-            "parent_id": parent_id,
-            "session_id": session_id,
-            "stream": True,
-            "params": {},
-            "aspect_ratio": target_ar,
-            "image_size": target_size,
-            "tool_servers": [],
-            "actions": [],
-            "filters": []
-        }
-
+        payload = {}
+        
+        # 必须分离 Payload 构造
         if request.gen_config.enable_gif:
-            payload["gifGeneration"] = True
-            logger.info(f"[Zai] 发起 GIF 生成请求 (model={request.preset.model})...")
+            # GIF 模式
+            logger.info(f"[Zai] 使用浏览器模式 Payload (GIF=True)...")
+            request_uuid = str(uuid.uuid4())
+            session_id = secrets.token_urlsafe(16)
+            
+            payload = {
+                "id": request_uuid,  
+                "background_tasks": {
+                    "title_generation": True, 
+                    "tags_generation": True, 
+                    "follow_up_generation": True
+                },
+                "features": {
+                    "voice": False,
+                    "image_generation": False, 
+                    "code_interpreter": False,
+                    "web_search": False
+                },
+                "chat_id": chat_id,
+                "model": request.preset.model,
+                "messages": messages,
+                "parent_id": parent_id,
+                "session_id": session_id,
+                "stream": True,
+                "params": {},
+                "aspect_ratio": target_ar,
+                "image_size": target_size,
+                "tool_servers": [],
+                "actions": [],
+                "filters": [],
+                "gifGeneration": True
+            }
         else:
-            payload["features"]["image_generation"] = True
-            logger.info(f"[Zai] 发起生图请求 (model={request.preset.model})...")
+            # 普通模式
+            logger.info(f"[Zai] 使用精简 API 模式 Payload (GIF=False)...")
+            payload = {
+                "chat_id": chat_id,
+                "model": request.preset.model,
+                "messages": messages,
+                "stream": True,
+                "params": {},
+                "image_size": target_size,
+                "aspect_ratio": target_ar
+            }
 
         headers = {
             "Authorization": token,
@@ -370,67 +381,81 @@ class ZaiProvider(OpenAIProvider):
             "Referer": "https://zai.is/"
         }
 
+        # 发送请求
         resp = await session.post(
             self.ZAI_COMPLETION_URL, 
             json=payload, 
             headers=headers, 
             proxy=request.proxy_url, 
+            stream=True,
             timeout=300
         )
 
-        # GIF 任务进入轮询
+        # GIF -> 轮询
         if request.gen_config.enable_gif:
-            logger.info("[Zai] GIF 任务提交成功，进入轮询...")
+            logger.info("[Zai] GIF 任务提交成功，进入轮询流程...")
             return await self._poll_chat_history(session, signer, token, chat_id, request.proxy_url, request.preset.model)
 
+        # 普通 -> SSE 流解析
+        if resp.status_code != 200:
+            logger.error(f"[Zai Chat Error] Status: {resp.status_code} | Body: {resp.text}")
+            raise PluginError(APIErrorType.SERVER_ERROR, f"Zai 生成失败 ({resp.status_code})")
+
         full_content = ""
-        content_type = resp.headers.get("Content-Type", "")
+        buffer = ""
 
-        # 流式处理
-        if "application/json" in content_type:
-            try:
-                data = await resp.json()
-                if "task_id" in data:
-                    return await self._poll_chat_history(session, signer, token, chat_id, request.proxy_url, request.preset.model)
+        async for chunk in resp.aiter_content():
+            if not chunk: continue
+            chunk_str = chunk.decode('utf-8', errors='ignore')
+            buffer += chunk_str
 
-                choices = data.get("choices", [])
-                if choices:
-                    full_content = choices[0].get("message", {}).get("content", "")
-            except Exception as e:
-                logger.error(f"[Zai JSON Error] {e}")
-        else:
-            buffer = ""
-            async for chunk in resp.aiter_content():
-                if not chunk: continue
-                chunk_str = chunk.decode('utf-8', errors='ignore')
-                buffer += chunk_str
-                while True:
-                    start_index = buffer.find("data: ")
-                    if start_index == -1:
-                        if len(buffer) > 1000: buffer = buffer[-100:]
-                        break
-                    next_start_index = buffer.find("data: ", start_index + 6)
-                    json_str = None
-                    if next_start_index != -1:
-                        segment = buffer[start_index:next_start_index]
-                        buffer = buffer[next_start_index:] 
-                        json_str = segment[6:].strip() 
-                    else:
-                        if "[DONE]" in buffer[start_index:]:
-                            json_str = "[DONE]"
+            while True:
+                start_index = buffer.find("data: ")
+                if start_index == -1:
+                    if len(buffer) > 100: buffer = buffer[-20:]
+                    break
+
+                next_start_index = buffer.find("data: ", start_index + 6)
+                json_str = None
+
+                if next_start_index != -1:
+                    segment = buffer[start_index:next_start_index]
+                    buffer = buffer[next_start_index:] 
+                    json_str = segment[6:].strip() 
+                else:
+                    if "[DONE]" in buffer[start_index:]:
+                        json_str = "[DONE]"
+                        buffer = "" 
+                    elif buffer.strip().endswith("}"): 
+                        temp_segment = buffer[start_index:]
+                        try:
+                            check_json = temp_segment[6:].strip()
+                            json.loads(check_json)
+                            json_str = check_json
                             buffer = "" 
+                        except:
+                            break
+                    else:
                         break
-                    if not json_str or json_str == "[DONE]": 
-                        continue
-                    try:
-                        data = json.loads(json_str)
-                        choices = data.get("choices", [])
-                        if choices:
-                            delta = choices[0].get("delta", {})
-                            content_piece = delta.get("content", "")
-                            if content_piece:
-                                full_content += content_piece
-                    except: pass
+
+                if not json_str: 
+                    continue
+
+                if json_str == "[DONE]":
+                    break
+
+                try:
+                    data = json.loads(json_str)
+                    choices = data.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content_piece = delta.get("content", "")
+                        if content_piece:
+                            full_content += content_piece
+                except json.JSONDecodeError:
+                    pass
+                except Exception as e:
+                    pass
 
         image_url = self._extract_image_url(full_content)
         if not image_url:
@@ -487,14 +512,14 @@ class ZaiProvider(OpenAIProvider):
                 role = last_msg.get("role")
                 content = last_msg.get("content", "")
 
-                logger.debug(f"[Zai Poll] #{i+1} Role: {role} | ContentLen: {len(str(content))}")
+                logger.info(f"[Zai Poll] #{i+1} Role: {role} | ContentLen: {len(str(content))}")
 
                 if role == "user":
                     continue
 
                 if last_msg.get("error"):
                     err_body = last_msg.get("error")
-                    logger.warning(f"[Zai Poll] 任务临时报错(可忽略): {err_body}")
+                    logger.warning(f"[Zai Poll] 任务报错: {err_body}")
                     continue
 
                 if role == "assistant":
@@ -505,7 +530,7 @@ class ZaiProvider(OpenAIProvider):
                         for f in files:
                             if "url" in f:
                                 target_url = f["url"]
-                                logger.info(f"[Zai Poll] 发现生成文件: {target_url}")
+                                logger.info(f"[Zai Poll] 从 files 数组中发现文件: {target_url}")
                                 break
 
                     if not target_url:
