@@ -19,7 +19,7 @@ class Ninjutsu(Star):
 
         # 同步
         self.prompt_resolver = PromptResolver()
-        self.provider_mgr = ProviderManager()
+        self.provider_mgr = ProviderManager(self.data_dir)
         self.config_service = ConfigService(self.conf, self.context)
         self.stats_service = StatsService(self.data_dir, self.conf)
 

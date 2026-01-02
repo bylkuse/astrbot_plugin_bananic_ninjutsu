@@ -5,7 +5,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-Plugin-purple?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.9-orange?style=flat-square)]()
+[![Version](https://img.shields.io/badge/Version-0.4.0-orange?style=flat-square)]()
 
 **专为 AstrBot 设计的新一代 AI 绘图工具**
 <br>
@@ -28,6 +28,8 @@
 
 ⚠小心刷屏：√生成后撤回等待词 √定时撤回生成结果 √已内置合并转发 ~~建议配合AstrBot **长文本转发功能** 使用~~
 <br>感谢还在默默支持我的朋友，偷偷把zai适配器修好了（请看常见问题），低调享受就好了
+<br>0.4.0更新实现了全自动获取和更新zai凭证，回归了原有逻辑（zai适配器的连接配置的key项里请填入你的discord token）
+<br>注意，凭证维护依然需要playwright依赖，请确保你的astrbot环境执行成功过playwright install
 <br>最近一直在写新插件，想法比精力多太多了
 
 ## 🖼️ 功能预览
@@ -345,18 +347,15 @@
 ## ❓ 常见问题
 
 ### 关于zAI
-感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来。0.3.8更新-gif模式也支持了（使用参数--g）
-<br>必须步骤：
-<br>1.找一处含 playwright 依赖的环境（即完成过 pip install playwright 和 playwright install 的环境，可以复用astrbot的环境或者uv建一个）
-<br>2.找到.../data/plugins/astrbot_plugin_bananic_ninjutsu/providers/zai_creds.py
-<br>3.在环境中运行 zai_creds.py （它是独立于插件的，因此你可以依情况把它移动到合适的地方运行），按提示操作导出 zai_creds.json
+感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来
+<br>你需要在zai适配器的连接配置里填入你的discord token作为key
+<br>0.3.8更新-gif模式也支持了（使用参数--g）
+<br>0.4.0更新-全自动获取和更新zai凭证
+<br>有个小毛病，刚获取凭证的一分钟似乎必定触发空回，暂时没有头绪
 
-<br>zAI凭据配置方案一（兼容）：
-<br>现在zAI类型的连接配置的 key 不再是 Discord Token ，而是 zai_creds.json 中的字符串内容（注意需要使用反斜杠进行完整的转义！因此推荐方案二！）
-
-<br>zAI凭据配置方案二（推荐）：
-<br>zAI类型的连接配置的 key 随便填个 default 之类的，插件识别到这不是合法密钥就会自动去寻找凭证文件
-<br>直接把生成的 zai_creds.json 放到以下两个路径之一，插件会自动加载（优先级排序）
+### 关于discord token
+Discord Token 在 Discord 登录后，携带 /api 请求的 Authorization 字段中找到
+<br>用以discord自动化登录，仅保存在本地，请自己做好服务器的安全防护
 
 ```
 .../data/plugin_data/astrbot_plugin_bananic_ninjutsu/

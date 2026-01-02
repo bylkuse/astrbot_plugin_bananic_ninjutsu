@@ -19,7 +19,8 @@ class ProviderManager:
         APIErrorType.UNKNOWN:         ("❌", 0),
     }
 
-    def __init__(self):
+    def __init__(self, data_dir: str):
+        self.data_dir = data_dir
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
         self._providers: Dict[str, BaseProvider] = {}
@@ -48,15 +49,14 @@ class ProviderManager:
         provider_cls = None
 
         if s_type == ApiType.OPENAI:
-            provider_cls = OpenAIProvider
+            instance = OpenAIProvider(session)
         elif s_type == ApiType.GOOGLE:
-            provider_cls = GoogleProvider
+            instance = GoogleProvider(session)
         elif s_type == ApiType.ZAI:
-            provider_cls = ZaiProvider
+            instance = ZaiProvider(session, self.data_dir)
         else:
             raise ValueError(f"不支持的 API 类型: {s_type}")
 
-        instance = provider_cls(session)
         self._providers[s_type] = instance
         return instance
 
@@ -264,6 +264,14 @@ class ProviderManager:
         return Err(last_error or PluginError(APIErrorType.UNKNOWN, "所有重试均失败"))
 
     async def terminate(self):
+        # 遍历所有已初始化的 Provider 并调用其 terminate
+        for name, provider in self._providers.items():
+            if hasattr(provider, "terminate"):
+                try:
+                    await provider.terminate()
+                except Exception as e:
+                    logger.warning(f"[ProviderManager] 关闭 {name} 失败: {e}")
+
         if self._session and not self._session.closed:
             await self._session.close()
             logger.info("[ProviderManager] Session 已关闭")
