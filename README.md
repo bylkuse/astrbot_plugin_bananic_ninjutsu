@@ -28,9 +28,9 @@
 
 ⚠小心刷屏：√生成后撤回等待词 √定时撤回生成结果 √已内置合并转发 ~~建议配合AstrBot **长文本转发功能** 使用~~
 <br>感谢还在默默支持我的朋友，偷偷把zai适配器修好了（请看常见问题），低调享受就好了
-<br>0.4.0更新实现了全自动获取和更新zai凭证，回归了原有逻辑（zai适配器的连接配置的key项里请填入你的discord token）
-<br>注意，凭证维护依然需要playwright依赖，请确保你的astrbot环境执行成功过playwright install
-<br>最近一直在写新插件，想法比精力多太多了
+~~<br>0.4.0更新实现了全自动获取和更新zai凭证，回归了原有逻辑（zai适配器的连接配置的key项里请填入你的discord token）~~
+~~<br>注意，凭证维护依然需要playwright依赖，请确保你的astrbot环境执行成功过playwright install~~
+<br>zai.is又更新了，方法又失效了QwQ
 
 ## 🖼️ 功能预览
 **不想看长篇大论？几张图带你速览插件特色**
@@ -347,15 +347,16 @@
 ## ❓ 常见问题
 
 ### 关于zAI
-感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来
-<br>你需要在zai适配器的连接配置里填入你的discord token作为key
-<br>0.3.8更新-gif模式也支持了（使用参数--g）
-<br>0.4.0更新-全自动获取和更新zai凭证
-<br>有个小毛病，刚获取凭证的一分钟似乎必定触发空回，暂时没有头绪
+zai.is又更新了，方法又失效了QwQ
+~~感谢项目 WangYiHeng-47/zai.is- ,我参考之后悄咪咪的把2api和图生图接口搓了出来~~
+~~<br>你需要在zai适配器的连接配置里填入你的discord token作为key~~
+~~<br>0.3.8更新-gif模式也支持了（使用参数--g）~~
+~~<br>0.4.0更新-全自动获取和更新zai凭证~~
+~~<br>有个小毛病，刚获取凭证的一分钟似乎必定触发空回，暂时没有头绪~~
 
 ### 关于discord token
-Discord Token 在 Discord 登录后，携带 /api 请求的 Authorization 字段中找到
-<br>用以discord自动化登录，仅保存在本地，请自己做好服务器的安全防护
+~~Discord Token 在 Discord 登录后，携带 /api 请求的 Authorization 字段中找到~~
+~~<br>用以discord自动化登录，仅保存在本地，请自己做好服务器的安全防护~~
 
 ```
 .../data/plugin_data/astrbot_plugin_bananic_ninjutsu/
