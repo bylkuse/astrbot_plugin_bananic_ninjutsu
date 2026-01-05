@@ -6,7 +6,6 @@ from typing import List, Optional, Dict, Any
 class ApiType(str, Enum):
     GOOGLE = "google"
     OPENAI = "openai"
-    ZAI = "zai"
 
 class APIErrorType(Enum):
     INVALID_ARGUMENT = "invalid_argument"
@@ -50,7 +49,6 @@ class GenerationConfig:
     timeout: int = 300                        # --to
     enable_search: bool = False               # --s
     enable_thinking: bool = False             # --t
-    enable_gif: bool = False                  # --g
     upscale_instruction: Optional[str] = None # --up
     sender_id: Optional[str] = None           # --q
     target_user_id: Optional[str] = None 

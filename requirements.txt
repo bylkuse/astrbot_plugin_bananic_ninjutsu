@@ -1,5 +1,3 @@
 aiohttp
 Pillow
 curl_cffi
-cryptography
-playwright

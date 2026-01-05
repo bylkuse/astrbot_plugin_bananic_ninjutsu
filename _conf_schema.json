@@ -45,8 +45,7 @@
         },
         "default": [
           "{\"name\": \"GoogleDefault\", \"api_type\": \"google\", \"api_url\": \"https://generativelanguage.googleapis.com\", \"model\": \"gemini-2.5-flash-image-preview\",\"stream\": null, \"api_keys\": []}",
-          "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://api.openai.com/v1/chat/completions\", \"model\": \"gpt-4o\",\"stream\": false, \"api_keys\": []}",
-		  "{\"name\": \"zAI\", \"api_type\": \"zai\", \"api_url\": \"https://zai.is/api/v1/chat/completions\", \"model\": \"gemini-3-pro-image-preview\",\"stream\": true, \"api_keys\": []}"
+          "{\"name\": \"OpenAI\", \"api_type\": \"openai\", \"api_url\": \"https://api.openai.com/v1/chat/completions\", \"model\": \"gpt-4o\",\"stream\": false, \"api_keys\": []}"
         ]
       },
       "timeout": {

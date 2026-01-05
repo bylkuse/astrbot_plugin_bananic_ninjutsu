@@ -8,7 +8,7 @@ from astrbot.api import logger
 
 from ..domain import ApiRequest, GenResult, PluginError, APIErrorType, ApiType, ConnectionPreset, GenerationConfig
 from ..utils import Result, Ok, Err
-from . import OpenAIProvider, GoogleProvider, ZaiProvider, BaseProvider
+from . import OpenAIProvider, GoogleProvider, BaseProvider
 
 class ProviderManager:
     ERROR_CONFIG = {
@@ -19,8 +19,7 @@ class ProviderManager:
         APIErrorType.UNKNOWN:         ("❌", 0),
     }
 
-    def __init__(self, data_dir: str):
-        self.data_dir = data_dir
+    def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
         self._providers: Dict[str, BaseProvider] = {}
@@ -52,8 +51,6 @@ class ProviderManager:
             instance = OpenAIProvider(session)
         elif s_type == ApiType.GOOGLE:
             instance = GoogleProvider(session)
-        elif s_type == ApiType.ZAI:
-            instance = ZaiProvider(session, self.data_dir)
         else:
             raise ValueError(f"不支持的 API 类型: {s_type}")
 
