@@ -86,6 +86,12 @@ class PlatformAdapter:
             elif isinstance(seg, At):
                 if str(seg.qq).isdigit():
                     sources.append(f"https://q1.qlogo.cn/g?b=qq&nk={seg.qq}&s=640")
+            
+            # 文本中的 @QQ (用于获取未在群内的用户头像)
+            elif isinstance(seg, Plain):
+                matches = re.findall(r"@(\d{5,11})", seg.text)
+                for qq in matches:
+                    sources.append(f"https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640")
 
         for seg in self.event.message_obj.message:
             _extract_from_seg(seg)
