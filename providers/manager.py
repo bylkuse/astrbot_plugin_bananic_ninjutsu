@@ -16,6 +16,7 @@ class ProviderManager:
         APIErrorType.QUOTA_EXHAUSTED: ("💰️", 3600 * 5),
         APIErrorType.RATE_LIMIT:      ("🛡️", 300),
         APIErrorType.SERVER_ERROR:    ("⌛", 60),
+        APIErrorType.TRANSIENT_ERROR: ("🔄", 0),  # 瞬态错误，不冷却Key，仅重试
         APIErrorType.UNKNOWN:         ("❌", 0),
     }
 

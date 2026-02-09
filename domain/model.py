@@ -14,6 +14,7 @@ class APIErrorType(Enum):
     NOT_FOUND = "not_found"
     RATE_LIMIT = "rate_limit"
     SERVER_ERROR = "server_error"
+    TRANSIENT_ERROR = "transient_error"  # 瞬态错误，可重试但不冷却Key
     SAFETY_BLOCK = "safety_block"
     DEBUG_INFO = "debug_info"
     UNKNOWN = "unknown"

@@ -56,8 +56,9 @@ class OpenAIProvider(BaseProvider):
             if not image_url:
                 preview = str(response_content)[:200]
                 hint = " (流式模式可能丢失了Base64图片，请尝试关闭流式)" if use_stream else ""
+                # 使用 TRANSIENT_ERROR: 这类错误通常是API响应不稳定导致的，应重试而非冷却Key
                 return Err(PluginError(
-                    APIErrorType.SERVER_ERROR, 
+                    APIErrorType.TRANSIENT_ERROR, 
                     f"API返回数据结构异常，无法提取图片{hint}。预览: {preview}"
                 ))
 

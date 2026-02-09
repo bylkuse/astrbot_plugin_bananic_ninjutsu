@@ -10,6 +10,7 @@ class ResponsePresenter:
         APIErrorType.NOT_FOUND: "🔍 接入错误\n🔧 模型名或接口有误。",
         APIErrorType.RATE_LIMIT: "🛡 超额请求\n🔧 节点或账户暂时受限。",
         APIErrorType.SERVER_ERROR: "🌊 网络异常\n🔧 上游服务波动。",
+        APIErrorType.TRANSIENT_ERROR: "🔄 响应异常\n🔧 API返回不稳定，已自动重试。",
         APIErrorType.SAFETY_BLOCK: "🚨 安全拦截\n🔧 内容包含敏感信息。",
         APIErrorType.DEBUG_INFO: "🛠️ 调试信息",
         APIErrorType.UNKNOWN: "❌ 未知错误\n🔧 请检查日志详情。",
