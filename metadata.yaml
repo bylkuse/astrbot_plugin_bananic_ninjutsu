@@ -1,6 +1,6 @@
 name: astrbot_plugin_bananic_ninjutsu
 display_name: 香蕉忍法帖
 desc: 适配napcat的Astrbot插件，用于🍌（nano banana），先进的变量&参数系统
-version: v0.4.3
+version: v0.4.4
 author: bylkuse
 repo: https://github.com/bylkuse/astrbot_plugin_bananic_ninjutsu

@@ -2,7 +2,7 @@ import json
 import base64
 import re
 import aiohttp
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from astrbot.api import logger
 
@@ -21,55 +21,193 @@ class OpenAIProvider(BaseProvider):
 
     async def generate(self, request: ApiRequest) -> Result[GenResult, PluginError]:
         try:
-            headers = await self._get_headers(request)
-            payload = await self._build_payload(request)
-
-            is_chat_request = "messages" in payload
-            url = self._resolve_endpoint(request.preset.api_base, is_chat=is_chat_request)
-            use_stream = payload.get("stream", False)
-
-            kwargs = self._get_request_kwargs(request, stream=use_stream)
-
-            # 对于 Images API，实现 response_format fallback 机制
-            is_images_api = "response_format" in payload and not is_chat_request
+            api_base = request.preset.api_base or ""
+            has_images = bool(request.image_bytes_list)
             
-            result = await self._do_request(url, payload, headers, kwargs, use_stream)
+            # 判断是否使用 Images API
+            is_images_api = self._is_images_api_endpoint(api_base)
             
-            # 如果是 Images API 且使用 b64_json 失败，尝试 fallback 到 url
-            if result.is_err() and is_images_api and payload.get("response_format") == "b64_json":
-                error = result.unwrap_err()
-                # 检查是否是 response_format 不支持导致的错误
-                if self._is_response_format_error(error):
-                    logger.info("[OpenAIProvider] b64_json 不支持，尝试使用 url 格式")
-                    payload["response_format"] = "url"
-                    result = await self._do_request(url, payload, headers, kwargs, use_stream)
-            
-            if result.is_err():
-                return result
-                
-            response_content = result.unwrap()
-            image_url = self._extract_image_url(response_content)
-
-            if not image_url:
-                preview = str(response_content)[:200]
-                hint = " (流式模式可能丢失了Base64图片，请尝试关闭流式)" if use_stream else ""
-                # 使用 TRANSIENT_ERROR: 这类错误通常是API响应不稳定导致的，应重试而非冷却Key
-                return Err(PluginError(
-                    APIErrorType.TRANSIENT_ERROR, 
-                    f"API返回数据结构异常，无法提取图片{hint}。预览: {preview}"
-                ))
-
-            image_bytes = await self._download_or_decode(image_url, request.proxy_url)
-
-            return Ok(GenResult(
-                images=[image_bytes],
-                model_name=request.preset.model,
-                finish_reason="success"
-            ))
+            if is_images_api:
+                # Images API 路径：根据有无图片路由到 generations 或 edits
+                return await self._generate_via_images_api(request, has_images)
+            else:
+                # Chat Completions API 路径
+                return await self._generate_via_chat_api(request)
 
         except Exception as e:
             error, _ = self.convert_exception(e)
             return Err(error)
+
+    async def _generate_via_chat_api(self, request: ApiRequest) -> Result[GenResult, PluginError]:
+        """通过 Chat Completions API 生成图片"""
+        headers = await self._get_headers(request)
+        payload = self._build_chat_payload(request)
+        
+        url = self._resolve_endpoint(request.preset.api_base, endpoint_type="chat")
+        use_stream = payload.get("stream", False)
+        kwargs = self._get_request_kwargs(request, stream=use_stream)
+        
+        result = await self._do_request(url, payload, headers, kwargs, use_stream)
+        
+        if result.is_err():
+            return result
+            
+        return await self._process_response(result.unwrap(), request, use_stream)
+
+    async def _generate_via_images_api(self, request: ApiRequest, has_images: bool) -> Result[GenResult, PluginError]:
+        """通过 Images API 生成图片（自动路由 generations/edits）"""
+        
+        if has_images:
+            # 图生图：使用 /v1/images/edits (multipart/form-data)
+            return await self._generate_via_images_edits(request)
+        else:
+            # 文生图：使用 /v1/images/generations (JSON)
+            return await self._generate_via_images_generations(request)
+
+    async def _generate_via_images_generations(self, request: ApiRequest) -> Result[GenResult, PluginError]:
+        """通过 /v1/images/generations 生成图片（文生图）"""
+        headers = await self._get_headers(request)
+        payload = self._build_images_generations_payload(request)
+        
+        url = self._resolve_endpoint(request.preset.api_base, endpoint_type="images_generations")
+        kwargs = self._get_request_kwargs(request, stream=False)
+        
+        result = await self._do_request(url, payload, headers, kwargs, use_stream=False)
+        
+        # response_format fallback 机制
+        if result.is_err() and payload.get("response_format") == "b64_json":
+            error = result.unwrap_err()
+            if self._is_response_format_error(error):
+                logger.info("[OpenAIProvider] b64_json 不支持，尝试使用 url 格式")
+                payload["response_format"] = "url"
+                result = await self._do_request(url, payload, headers, kwargs, use_stream=False)
+        
+        if result.is_err():
+            return result
+            
+        return await self._process_response(result.unwrap(), request, use_stream=False)
+
+    async def _generate_via_images_edits(self, request: ApiRequest) -> Result[GenResult, PluginError]:
+        """通过 /v1/images/edits 生成图片（图生图，multipart/form-data）"""
+        url = self._resolve_endpoint(request.preset.api_base, endpoint_type="images_edits")
+        
+        # 构建 multipart/form-data
+        form_data = aiohttp.FormData()
+        form_data.add_field("prompt", request.gen_config.prompt)
+        form_data.add_field("model", request.preset.model)
+        form_data.add_field("n", "1")
+        form_data.add_field("response_format", "b64_json")
+        
+        # 尺寸
+        size = self._map_images_api_size(request.gen_config.image_size, request.preset.model)
+        if size:
+            form_data.add_field("size", size)
+        
+        # 添加图片（取第一张）
+        img_bytes = None
+        mime_type = "image/png"
+        if request.image_bytes_list:
+            img_bytes = request.image_bytes_list[0]
+            mime_type = ImageUtils.get_mime_type(img_bytes)
+            ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
+            form_data.add_field(
+                "image",
+                img_bytes,
+                filename=f"image.{ext}",
+                content_type=mime_type
+            )
+        
+        headers = {
+            "Authorization": f"Bearer {request.api_key}",
+            "Accept-Encoding": "gzip, deflate",
+        }
+        
+        kwargs = self._get_request_kwargs(request, stream=False)
+        
+        result = await self._do_multipart_request(url, form_data, headers, kwargs)
+        
+        # 如果 /v1/images/edits 返回 404，尝试 fallback 到 /v1/images/generations 带 image 参数
+        if result.is_err():
+            error = result.unwrap_err()
+            if error.status_code == 404:
+                logger.info("[OpenAIProvider] /v1/images/edits 返回 404，尝试 fallback 到 /v1/images/generations 带 image 参数")
+                return await self._generate_via_images_generations_with_image(request)
+            
+            # response_format fallback
+            if self._is_response_format_error(error):
+                logger.info("[OpenAIProvider] edits b64_json 不支持，尝试使用 url 格式")
+                # 重新构建 form_data
+                form_data = aiohttp.FormData()
+                form_data.add_field("prompt", request.gen_config.prompt)
+                form_data.add_field("model", request.preset.model)
+                form_data.add_field("n", "1")
+                form_data.add_field("response_format", "url")
+                if size:
+                    form_data.add_field("size", size)
+                if img_bytes:
+                    ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
+                    form_data.add_field("image", img_bytes, filename=f"image.{ext}", content_type=mime_type)
+                result = await self._do_multipart_request(url, form_data, headers, kwargs)
+        
+        if result.is_err():
+            return result
+            
+        return await self._process_response(result.unwrap(), request, use_stream=False)
+
+    async def _generate_via_images_generations_with_image(self, request: ApiRequest) -> Result[GenResult, PluginError]:
+        """
+        通过 /v1/images/generations 带 image 参数进行图生图。
+        
+        某些中转站扩展了 generations 接口，支持传入 image 参数进行图生图，
+        作为 /v1/images/edits 不可用时的 fallback。
+        """
+        headers = await self._get_headers(request)
+        payload = self._build_images_generations_payload(request)
+        
+        # 添加 image 参数（Base64 格式）
+        if request.image_bytes_list:
+            img_bytes = request.image_bytes_list[0]
+            mime_type = ImageUtils.get_mime_type(img_bytes)
+            b64_str = base64.b64encode(img_bytes).decode("utf-8")
+            payload["image"] = f"data:{mime_type};base64,{b64_str}"
+        
+        url = self._resolve_endpoint(request.preset.api_base, endpoint_type="images_generations")
+        kwargs = self._get_request_kwargs(request, stream=False)
+        
+        result = await self._do_request(url, payload, headers, kwargs, use_stream=False)
+        
+        # response_format fallback
+        if result.is_err() and payload.get("response_format") == "b64_json":
+            error = result.unwrap_err()
+            if self._is_response_format_error(error):
+                logger.info("[OpenAIProvider] generations+image b64_json 不支持，尝试使用 url 格式")
+                payload["response_format"] = "url"
+                result = await self._do_request(url, payload, headers, kwargs, use_stream=False)
+        
+        if result.is_err():
+            return result
+            
+        return await self._process_response(result.unwrap(), request, use_stream=False)
+
+    async def _process_response(self, response_content: Any, request: ApiRequest, use_stream: bool) -> Result[GenResult, PluginError]:
+        """处理 API 响应，提取图片"""
+        image_url = self._extract_image_url(response_content)
+
+        if not image_url:
+            preview = str(response_content)[:200]
+            hint = " (流式模式可能丢失了Base64图片，请尝试关闭流式)" if use_stream else ""
+            return Err(PluginError(
+                APIErrorType.TRANSIENT_ERROR, 
+                f"API返回数据结构异常，无法提取图片{hint}。预览: {preview}"
+            ))
+
+        image_bytes = await self._download_or_decode(image_url, request.proxy_url)
+
+        return Ok(GenResult(
+            images=[image_bytes],
+            model_name=request.preset.model,
+            finish_reason="success"
+        ))
 
     async def _do_request(
         self, 
@@ -79,7 +217,7 @@ class OpenAIProvider(BaseProvider):
         kwargs: Dict[str, Any],
         use_stream: bool
     ) -> Result[Any, PluginError]:
-        """执行 HTTP 请求并返回响应内容"""
+        """执行 JSON 请求并返回响应内容"""
         try:
             async with self.session.post(url, json=payload, headers=headers, **kwargs) as resp:
                 if resp.status != 200:
@@ -88,7 +226,12 @@ class OpenAIProvider(BaseProvider):
                     try:
                         err_json = json.loads(text)
                         if "error" in err_json:
-                            detail = err_json["error"].get("message", str(err_json["error"]))
+                            error_field = err_json["error"]
+                            # error 可能是字典或字符串
+                            if isinstance(error_field, dict):
+                                detail = error_field.get("message", str(error_field))
+                            else:
+                                detail = str(error_field)
                             msg += f": {detail}"
                         else:
                             msg += f" - {text[:200]}"
@@ -101,6 +244,45 @@ class OpenAIProvider(BaseProvider):
                     response_content = await self._parse_sse_response(resp)
                 else:
                     response_content = await resp.json()
+                    
+            return Ok(response_content)
+        except PluginError as e:
+            return Err(e)
+        except Exception as e:
+            error, _ = self.convert_exception(e)
+            return Err(error)
+
+    async def _do_multipart_request(
+        self,
+        url: str,
+        form_data: aiohttp.FormData,
+        headers: Dict[str, str],
+        kwargs: Dict[str, Any]
+    ) -> Result[Any, PluginError]:
+        """执行 multipart/form-data 请求"""
+        try:
+            async with self.session.post(url, data=form_data, headers=headers, **kwargs) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    msg = f"HTTP {resp.status}"
+                    try:
+                        err_json = json.loads(text)
+                        if "error" in err_json:
+                            error_field = err_json["error"]
+                            # error 可能是字典或字符串
+                            if isinstance(error_field, dict):
+                                detail = error_field.get("message", str(error_field))
+                            else:
+                                detail = str(error_field)
+                            msg += f": {detail}"
+                        else:
+                            msg += f" - {text[:200]}"
+                    except:
+                        msg += f" - {text[:200]}"
+
+                    return Err(PluginError(APIErrorType.SERVER_ERROR, msg, resp.status))
+
+                response_content = await resp.json()
                     
             return Ok(response_content)
         except PluginError as e:
@@ -154,52 +336,18 @@ class OpenAIProvider(BaseProvider):
         }
 
     def _is_images_api_endpoint(self, api_base: Optional[str]) -> bool:
-        """判断是否为 /v1/images/generations 接入点"""
+        """判断是否为 Images API 接入点 (/v1/images/*)"""
         if not api_base:
             return False
         url = api_base.lower().strip().rstrip("/")
-        return url.endswith("/images/generations") or "/images/" in url
+        # 匹配 /images/generations, /images/edits, /images/variations 或 /images
+        return "/images/" in url or url.endswith("/images")
 
-    async def _build_payload(self, request: ApiRequest) -> Dict[str, Any]:
+    def _build_chat_payload(self, request: ApiRequest) -> Dict[str, Any]:
+        """构建 Chat Completions API 的请求体"""
         model = request.preset.model.lower()
-        api_base = request.preset.api_base or ""
+        use_stream = self._get_stream_setting(request.preset)
         
-        # 判断接口类型优先级：
-        # 1. 用户显式配置了 /images/generations 端点
-        # 2. 模型名包含 dall-e 且不是 chat 端点
-        is_images_api = self._is_images_api_endpoint(api_base)
-        is_native_dalle = "dall-e" in model and "chat" not in api_base.lower()
-        
-        # 使用 Images API 的情况：显式配置了 images 端点，或者是原生 DALL-E
-        use_images_api = is_images_api or is_native_dalle
-        
-        # Images API 不支持流式
-        use_stream = False if use_images_api else self._get_stream_setting(request.preset)
-
-        # Images API (包括 /v1/images/generations 和原生 DALL-E)
-        if use_images_api:
-            payload = {
-                "model": request.preset.model,
-                "prompt": request.gen_config.prompt,
-                "n": 1,
-            }
-            
-            # 尺寸映射
-            size = self._map_images_api_size(request.gen_config.image_size, model)
-            if size:
-                payload["size"] = size
-            
-            # response_format: 优先 b64_json，但某些 API 可能只支持 url
-            # 通过配置或自动降级处理
-            payload["response_format"] = "b64_json"
-            
-            # DALL-E 3 特有参数
-            if "dall-e-3" in model:
-                payload["quality"] = "standard"
-            
-            return payload
-
-        # Chat Completions API
         content_list: List[Dict[str, Any]] = [{"type": "text", "text": request.gen_config.prompt}]
 
         for img_bytes in request.image_bytes_list:
@@ -231,25 +379,68 @@ class OpenAIProvider(BaseProvider):
 
         return payload
 
-    def _resolve_endpoint(self, base_url: str, is_chat: bool = True) -> str:
+    def _build_images_generations_payload(self, request: ApiRequest) -> Dict[str, Any]:
+        """构建 /v1/images/generations 的请求体（文生图）"""
+        model = request.preset.model.lower()
+        
+        payload = {
+            "model": request.preset.model,
+            "prompt": request.gen_config.prompt,
+            "n": 1,
+            "response_format": "b64_json"
+        }
+        
+        # 尺寸映射
+        size = self._map_images_api_size(request.gen_config.image_size, model)
+        if size:
+            payload["size"] = size
+        
+        # DALL-E 3 特有参数
+        if "dall-e-3" in model:
+            payload["quality"] = "standard"
+        
+        return payload
+
+    def _resolve_endpoint(self, base_url: str, endpoint_type: str = "chat") -> str:
+        """
+        解析并返回正确的 API 端点。
+        
+        Args:
+            base_url: 用户配置的 API 基础地址
+            endpoint_type: "chat" | "images_generations" | "images_edits"
+        """
         url = (base_url or "").strip().rstrip("/")
+        
+        # 默认端点
+        defaults = {
+            "chat": "https://api.openai.com/v1/chat/completions",
+            "images_generations": "https://api.openai.com/v1/images/generations",
+            "images_edits": "https://api.openai.com/v1/images/edits"
+        }
+        
         if not url:
-            return "https://api.openai.com/v1/chat/completions" if is_chat else "https://api.openai.com/v1/images/generations"
+            return defaults.get(endpoint_type, defaults["chat"])
 
-        # 已经是完整端点的情况，直接返回
-        if url.endswith("/images/generations"):
-            return url if not is_chat else url.replace("/images/generations", "/chat/completions")
-        if url.endswith("/chat/completions"):
-            return url if is_chat else url.replace("/chat/completions", "/images/generations")
-
-        # 需要补全端点
-        if is_chat:
-            if re.search(r"/v1(?:beta)?$", url): return f"{url}/chat/completions"
-            return f"{url}/v1/chat/completions"
-        else:
-            if url.endswith("/v1"): return f"{url}/images/generations"
-            if url.endswith("/v1/models"): return url.replace("/models", "/images/generations")
-            return f"{url}/v1/images/generations"
+        # 提取基础 URL（去掉具体端点路径）
+        base = url
+        for suffix in ["/chat/completions", "/images/generations", "/images/edits", "/images/variations"]:
+            if url.lower().endswith(suffix):
+                base = url[:-len(suffix)]
+                break
+        
+        # 确保 base 以 /v1 结尾
+        if not re.search(r"/v1(?:beta)?$", base.lower()):
+            if not base.endswith("/v1"):
+                base = f"{base}/v1"
+        
+        # 根据类型返回完整端点
+        endpoints = {
+            "chat": f"{base}/chat/completions",
+            "images_generations": f"{base}/images/generations",
+            "images_edits": f"{base}/images/edits"
+        }
+        
+        return endpoints.get(endpoint_type, endpoints["chat"])
 
     def _extract_image_url(self, content: Any) -> Optional[str]:
         """
@@ -315,14 +506,15 @@ class OpenAIProvider(BaseProvider):
 
                 content = message.get("content", "")
             
-            # 某些 API 直接在顶层返回 url 或 image
-            if "url" in content:
-                return content["url"]
-            if "image" in content and isinstance(content["image"], str):
-                img = content["image"]
-                if img.startswith("data:") or img.startswith("http"):
-                    return img
-                return f"data:image/png;base64,{img}"
+            # 某些 API 直接在顶层返回 url 或 image（需要确保 content 是字典）
+            if isinstance(content, dict):
+                if "url" in content:
+                    return content["url"]
+                if "image" in content and isinstance(content["image"], str):
+                    img = content["image"]
+                    if img.startswith("data:") or img.startswith("http"):
+                        return img
+                    return f"data:image/png;base64,{img}"
 
         # 字符串内容解析
         if isinstance(content, str):
@@ -389,7 +581,7 @@ class OpenAIProvider(BaseProvider):
         return "1024x1024"
 
     async def get_models(self, request: ApiRequest) -> List[str]:
-        chat_url = self._resolve_endpoint(request.preset.api_base, is_chat=True)
+        chat_url = self._resolve_endpoint(request.preset.api_base, endpoint_type="chat")
 
         if "/chat/completions" in chat_url:
             url = chat_url.replace("/chat/completions", "/models")
