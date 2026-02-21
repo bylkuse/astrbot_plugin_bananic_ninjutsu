@@ -30,27 +30,24 @@ class OpenAIProvider(BaseProvider):
 
             kwargs = self._get_request_kwargs(request, stream=use_stream)
 
-            async with self.session.post(url, json=payload, headers=headers, **kwargs) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    msg = f"HTTP {resp.status}"
-                    try:
-                        err_json = json.loads(text)
-                        if "error" in err_json:
-                            detail = err_json["error"].get("message", str(err_json["error"]))
-                            msg += f": {detail}"
-                        else:
-                            msg += f" - {text[:200]}"
-                    except:
-                        msg += f" - {text[:200]}"
-
-                    raise PluginError(APIErrorType.SERVER_ERROR, msg, resp.status)
-
-                if use_stream:
-                    response_content = await self._parse_sse_response(resp)
-                else:
-                    response_content = await resp.json()
-
+            # 对于 Images API，实现 response_format fallback 机制
+            is_images_api = "response_format" in payload and not is_chat_request
+            
+            result = await self._do_request(url, payload, headers, kwargs, use_stream)
+            
+            # 如果是 Images API 且使用 b64_json 失败，尝试 fallback 到 url
+            if result.is_err() and is_images_api and payload.get("response_format") == "b64_json":
+                error = result.unwrap_err()
+                # 检查是否是 response_format 不支持导致的错误
+                if self._is_response_format_error(error):
+                    logger.info("[OpenAIProvider] b64_json 不支持，尝试使用 url 格式")
+                    payload["response_format"] = "url"
+                    result = await self._do_request(url, payload, headers, kwargs, use_stream)
+            
+            if result.is_err():
+                return result
+                
+            response_content = result.unwrap()
             image_url = self._extract_image_url(response_content)
 
             if not image_url:
@@ -73,6 +70,57 @@ class OpenAIProvider(BaseProvider):
         except Exception as e:
             error, _ = self.convert_exception(e)
             return Err(error)
+
+    async def _do_request(
+        self, 
+        url: str, 
+        payload: Dict[str, Any], 
+        headers: Dict[str, str], 
+        kwargs: Dict[str, Any],
+        use_stream: bool
+    ) -> Result[Any, PluginError]:
+        """执行 HTTP 请求并返回响应内容"""
+        try:
+            async with self.session.post(url, json=payload, headers=headers, **kwargs) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    msg = f"HTTP {resp.status}"
+                    try:
+                        err_json = json.loads(text)
+                        if "error" in err_json:
+                            detail = err_json["error"].get("message", str(err_json["error"]))
+                            msg += f": {detail}"
+                        else:
+                            msg += f" - {text[:200]}"
+                    except:
+                        msg += f" - {text[:200]}"
+
+                    return Err(PluginError(APIErrorType.SERVER_ERROR, msg, resp.status))
+
+                if use_stream:
+                    response_content = await self._parse_sse_response(resp)
+                else:
+                    response_content = await resp.json()
+                    
+            return Ok(response_content)
+        except PluginError as e:
+            return Err(e)
+        except Exception as e:
+            error, _ = self.convert_exception(e)
+            return Err(error)
+
+    def _is_response_format_error(self, error: PluginError) -> bool:
+        """判断错误是否由 response_format 参数不支持导致"""
+        msg = error.message.lower()
+        keywords = [
+            "response_format", 
+            "b64_json", 
+            "invalid", 
+            "not supported",
+            "unknown parameter",
+            "unrecognized"
+        ]
+        return any(k in msg for k in keywords)
 
     async def _parse_sse_response(self, resp: aiohttp.ClientResponse) -> str:
         full_text_accumulator = []
@@ -105,25 +153,53 @@ class OpenAIProvider(BaseProvider):
             "Accept-Encoding": "gzip, deflate",
         }
 
+    def _is_images_api_endpoint(self, api_base: Optional[str]) -> bool:
+        """判断是否为 /v1/images/generations 接入点"""
+        if not api_base:
+            return False
+        url = api_base.lower().strip().rstrip("/")
+        return url.endswith("/images/generations") or "/images/" in url
+
     async def _build_payload(self, request: ApiRequest) -> Dict[str, Any]:
         model = request.preset.model.lower()
-        is_native_dalle = "dall-e" in model and "chat" not in (request.preset.api_base or "")
-        use_stream = False if is_native_dalle else self._get_stream_setting(request.preset)
+        api_base = request.preset.api_base or ""
+        
+        # 判断接口类型优先级：
+        # 1. 用户显式配置了 /images/generations 端点
+        # 2. 模型名包含 dall-e 且不是 chat 端点
+        is_images_api = self._is_images_api_endpoint(api_base)
+        is_native_dalle = "dall-e" in model and "chat" not in api_base.lower()
+        
+        # 使用 Images API 的情况：显式配置了 images 端点，或者是原生 DALL-E
+        use_images_api = is_images_api or is_native_dalle
+        
+        # Images API 不支持流式
+        use_stream = False if use_images_api else self._get_stream_setting(request.preset)
 
-        # DALL-E
-        if is_native_dalle:
+        # Images API (包括 /v1/images/generations 和原生 DALL-E)
+        if use_images_api:
             payload = {
                 "model": request.preset.model,
                 "prompt": request.gen_config.prompt,
                 "n": 1,
-                "size": self._map_dalle_size(request.gen_config.image_size),
-                "response_format": "b64_json"
             }
+            
+            # 尺寸映射
+            size = self._map_images_api_size(request.gen_config.image_size, model)
+            if size:
+                payload["size"] = size
+            
+            # response_format: 优先 b64_json，但某些 API 可能只支持 url
+            # 通过配置或自动降级处理
+            payload["response_format"] = "b64_json"
+            
+            # DALL-E 3 特有参数
             if "dall-e-3" in model:
                 payload["quality"] = "standard"
+            
             return payload
 
-        # Chat Completions
+        # Chat Completions API
         content_list: List[Dict[str, Any]] = [{"type": "text", "text": request.gen_config.prompt}]
 
         for img_bytes in request.image_bytes_list:
@@ -140,7 +216,7 @@ class OpenAIProvider(BaseProvider):
             "stream": use_stream
         }
 
-        # Gemini
+        # Gemini via OpenAI 兼容层
         if "pro" in model and ("image" in model or "banana" in model):
             payload["modalities"] = ["image", "text"]
             img_config = {}
@@ -160,27 +236,62 @@ class OpenAIProvider(BaseProvider):
         if not url:
             return "https://api.openai.com/v1/chat/completions" if is_chat else "https://api.openai.com/v1/images/generations"
 
+        # 已经是完整端点的情况，直接返回
+        if url.endswith("/images/generations"):
+            return url if not is_chat else url.replace("/images/generations", "/chat/completions")
+        if url.endswith("/chat/completions"):
+            return url if is_chat else url.replace("/chat/completions", "/images/generations")
+
+        # 需要补全端点
         if is_chat:
-            if url.endswith("/chat/completions"): return url
             if re.search(r"/v1(?:beta)?$", url): return f"{url}/chat/completions"
             return f"{url}/v1/chat/completions"
         else:
-            if url.endswith("/chat/completions"): 
-                return url.replace("/chat/completions", "/images/generations")
             if url.endswith("/v1"): return f"{url}/images/generations"
             if url.endswith("/v1/models"): return url.replace("/models", "/images/generations")
             return f"{url}/v1/images/generations"
 
     def _extract_image_url(self, content: Any) -> Optional[str]:
+        """
+        从 API 响应中提取图片 URL 或 Base64 数据。
+        
+        支持的响应格式：
+        1. Images API 标准格式: {"data": [{"url": "..."} 或 {"b64_json": "..."}]}
+        2. Images API 变体: {"data": [{"image": "base64..."}]}
+        3. Chat Completions 格式: {"choices": [{"message": {"content": "..."}}]}
+        4. 其他自定义格式
+        """
         # JSON 对象
         if isinstance(content, dict):
-            # DALL-E
+            # Images API 标准格式 (OpenAI DALL-E, Flux, SDXL 等)
             if "data" in content and isinstance(content["data"], list) and content["data"]:
                 item = content["data"][0]
-                if "url" in item: return item["url"]
-                if "b64_json" in item: return f"data:image/png;base64,{item['b64_json']}"
+                # 标准字段 - 注意：某些 API 会返回 url=None，所以需要检查值是否为真
+                if item.get("url"):
+                    return item["url"]
+                if item.get("b64_json"):
+                    return f"data:image/png;base64,{item['b64_json']}"
+                # 某些 API 使用 "image" 字段返回 base64
+                if "image" in item:
+                    img_data = item["image"]
+                    if isinstance(img_data, str):
+                        if img_data.startswith("data:") or img_data.startswith("http"):
+                            return img_data
+                        # 假设是纯 base64
+                        return f"data:image/png;base64,{img_data}"
+                # 某些 API 使用 "base64" 字段
+                if "base64" in item:
+                    return f"data:image/png;base64,{item['base64']}"
+                # revised_prompt 旁边可能有 url（某些 API）
+                for key in ["image_url", "imageUrl", "output"]:
+                    if key in item:
+                        val = item[key]
+                        if isinstance(val, str):
+                            return val
+                        if isinstance(val, dict) and "url" in val:
+                            return val["url"]
 
-            # Chat Completions
+            # Chat Completions 格式
             if "choices" in content and isinstance(content["choices"], list) and content["choices"]:
                 choice = content["choices"][0]
                 message = choice.get("message", {})
@@ -203,8 +314,17 @@ class OpenAIProvider(BaseProvider):
                             return img_obj["image_url"].get("url")
 
                 content = message.get("content", "")
+            
+            # 某些 API 直接在顶层返回 url 或 image
+            if "url" in content:
+                return content["url"]
+            if "image" in content and isinstance(content["image"], str):
+                img = content["image"]
+                if img.startswith("data:") or img.startswith("http"):
+                    return img
+                return f"data:image/png;base64,{img}"
 
-        # 字符串
+        # 字符串内容解析
         if isinstance(content, str):
             content = content.strip()
             # Markdown 图片
@@ -230,6 +350,42 @@ class OpenAIProvider(BaseProvider):
         s = size_str.upper()
         if "1K" in s or "1024" in s: return "1024x1024"
         if "512" in s: return "512x512"
+        return "1024x1024"
+
+    def _map_images_api_size(self, size_str: str, model: str = "") -> Optional[str]:
+        """
+        将插件的尺寸配置映射为 Images API 的 size 参数。
+        
+        不同 API 支持的尺寸不同：
+        - DALL-E 2: 256x256, 512x512, 1024x1024
+        - DALL-E 3: 1024x1024, 1792x1024, 1024x1792
+        - Flux/SDXL 等: 通常支持更多尺寸
+        
+        返回 None 表示不设置 size，让 API 使用默认值（提高兼容性）
+        """
+        s = size_str.upper()
+        model_lower = model.lower()
+        
+        # DALL-E 3 特殊处理
+        if "dall-e-3" in model_lower:
+            if "1792" in s or "HD" in s or "2K" in s:
+                return "1792x1024"
+            return "1024x1024"
+        
+        # DALL-E 2
+        if "dall-e-2" in model_lower or "dall-e" in model_lower:
+            if "512" in s: return "512x512"
+            if "256" in s: return "256x256"
+            return "1024x1024"
+        
+        # 其他模型（Flux, SDXL, Midjourney 等）使用通用映射
+        # 尽量返回常见尺寸，提高兼容性
+        if "2K" in s or "2048" in s: return "2048x2048"
+        if "1K" in s or "1024" in s: return "1024x1024"
+        if "768" in s: return "768x768"
+        if "512" in s: return "512x512"
+        
+        # 默认 1024x1024，这是最广泛支持的尺寸
         return "1024x1024"
 
     async def get_models(self, request: ApiRequest) -> List[str]:
