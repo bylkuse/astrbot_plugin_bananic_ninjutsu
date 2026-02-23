@@ -98,10 +98,21 @@ class OpenAIProvider(BaseProvider):
         form_data.add_field("n", "1")
         form_data.add_field("response_format", "b64_json")
         
-        # 尺寸
+        # 尺寸 - 标准 OpenAI 格式
         size = self._map_images_api_size(request.gen_config.image_size, request.preset.model)
         if size:
             form_data.add_field("size", size)
+        
+        # 聚合 API 扩展参数：resolution
+        resolution = self._map_resolution(request.gen_config.image_size)
+        form_data.add_field("resolution", resolution)
+        
+        # 聚合 API 扩展参数：aspectRatio
+        aspect_ratio = self._map_aspect_ratio_for_images_api(
+            request.gen_config.aspect_ratio,
+            request.gen_config.image_size
+        )
+        form_data.add_field("aspectRatio", aspect_ratio)
         
         # 添加图片（取第一张）
         img_bytes = None
@@ -144,6 +155,9 @@ class OpenAIProvider(BaseProvider):
                 form_data.add_field("response_format", "url")
                 if size:
                     form_data.add_field("size", size)
+                # 聚合 API 扩展参数
+                form_data.add_field("resolution", resolution)
+                form_data.add_field("aspectRatio", aspect_ratio)
                 if img_bytes:
                     ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
                     form_data.add_field("image", img_bytes, filename=f"image.{ext}", content_type=mime_type)
@@ -380,7 +394,17 @@ class OpenAIProvider(BaseProvider):
         return payload
 
     def _build_images_generations_payload(self, request: ApiRequest) -> Dict[str, Any]:
-        """构建 /v1/images/generations 的请求体（文生图）"""
+        """
+        构建 /v1/images/generations 的请求体（文生图）
+        
+        兼容性设计：
+        - 标准 OpenAI API: 使用 size 参数 (如 "1024x1024")
+        - 聚合 API (中转站): 额外使用 resolution (如 "2k") 和 aspectRatio (如 "16:9")
+        
+        同时发送这些参数可以确保：
+        1. 标准 API 忽略不认识的参数，使用 size
+        2. 聚合 API 可以根据后端模型选择合适的参数
+        """
         model = request.preset.model.lower()
         
         payload = {
@@ -390,10 +414,23 @@ class OpenAIProvider(BaseProvider):
             "response_format": "b64_json"
         }
         
-        # 尺寸映射
+        # 尺寸映射 - 标准 OpenAI 格式
         size = self._map_images_api_size(request.gen_config.image_size, model)
         if size:
             payload["size"] = size
+        
+        # 聚合 API 扩展参数：resolution
+        # 某些聚合接口（如中转站）使用 resolution 参数控制分辨率
+        resolution = self._map_resolution(request.gen_config.image_size)
+        payload["resolution"] = resolution
+        
+        # 聚合 API 扩展参数：aspectRatio
+        # 某些聚合接口使用 aspectRatio 参数控制长宽比
+        aspect_ratio = self._map_aspect_ratio_for_images_api(
+            request.gen_config.aspect_ratio, 
+            request.gen_config.image_size
+        )
+        payload["aspectRatio"] = aspect_ratio
         
         # DALL-E 3 特有参数
         if "dall-e-3" in model:
@@ -572,6 +609,7 @@ class OpenAIProvider(BaseProvider):
         
         # 其他模型（Flux, SDXL, Midjourney 等）使用通用映射
         # 尽量返回常见尺寸，提高兼容性
+        if "4K" in s or "4096" in s: return "4096x4096"
         if "2K" in s or "2048" in s: return "2048x2048"
         if "1K" in s or "1024" in s: return "1024x1024"
         if "768" in s: return "768x768"
@@ -579,6 +617,68 @@ class OpenAIProvider(BaseProvider):
         
         # 默认 1024x1024，这是最广泛支持的尺寸
         return "1024x1024"
+
+    def _map_resolution(self, size_str: str) -> str:
+        """
+        将插件的尺寸配置映射为聚合 API 的 resolution 参数。
+        
+        聚合 API（如中转站）通常使用 resolution 参数来控制图片分辨率，
+        格式如 "1k", "2k", "4k" 等。
+        """
+        s = size_str.upper()
+        
+        if "4K" in s or "4096" in s:
+            return "4k"
+        if "2K" in s or "2048" in s:
+            return "2k"
+        if "1K" in s or "1024" in s:
+            return "1k"
+        if "768" in s:
+            return "768"
+        if "512" in s:
+            return "512"
+        
+        # 默认 1k
+        return "1k"
+
+    def _map_aspect_ratio_for_images_api(self, aspect_ratio: str, size_str: str) -> str:
+        """
+        将长宽比映射为 Images API 聚合接口使用的 aspectRatio 参数。
+        
+        支持格式：
+        - "16:9", "9:16", "4:3", "3:4", "1:1" 等
+        - "default" 表示使用默认值（返回 "1:1"）
+        """
+        if aspect_ratio and aspect_ratio.lower() != "default":
+            return aspect_ratio
+        
+        # 根据 size 参数推断长宽比（如果 size 包含非正方形尺寸）
+        if "x" in size_str:
+            try:
+                w, h = size_str.lower().replace(" ", "").split("x")
+                w, h = int(w), int(h)
+                if w > h:
+                    # 横向比例
+                    ratio = w / h
+                    if abs(ratio - 16/9) < 0.1:
+                        return "16:9"
+                    elif abs(ratio - 4/3) < 0.1:
+                        return "4:3"
+                    elif abs(ratio - 3/2) < 0.1:
+                        return "3:2"
+                elif h > w:
+                    # 纵向比例
+                    ratio = h / w
+                    if abs(ratio - 16/9) < 0.1:
+                        return "9:16"
+                    elif abs(ratio - 4/3) < 0.1:
+                        return "3:4"
+                    elif abs(ratio - 3/2) < 0.1:
+                        return "2:3"
+            except (ValueError, ZeroDivisionError):
+                pass
+        
+        return "1:1"
 
     async def get_models(self, request: ApiRequest) -> List[str]:
         chat_url = self._resolve_endpoint(request.preset.api_base, endpoint_type="chat")
