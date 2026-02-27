@@ -379,7 +379,7 @@ class OpenAIProvider(BaseProvider):
         }
 
         # Gemini via OpenAI 兼容层
-        if "pro" in model and ("image" in model or "banana" in model):
+        if "image" in model or "banana" in model:
             payload["modalities"] = ["image", "text"]
             img_config = {}
             if request.gen_config.aspect_ratio != "default":

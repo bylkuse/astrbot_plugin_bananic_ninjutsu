@@ -185,9 +185,9 @@ class GoogleProvider(BaseProvider):
             image_config["aspectRatio"] = request.gen_config.aspect_ratio
 
         model_lower = model_name.lower()
-        should_send_size = "pro" in model_lower and ("image" in model_lower or "banana" in model_lower)
+        is_image_gen_model = "image" in model_lower or "banana" in model_lower
 
-        if should_send_size and request.gen_config.image_size != "1K":
+        if is_image_gen_model and request.gen_config.image_size != "1K":
             image_config["imageSize"] = request.gen_config.image_size
 
         if image_config:
